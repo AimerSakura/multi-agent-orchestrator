@@ -133,7 +133,7 @@ def wrap_command_for_platform(cmd: list[str]) -> list[str]:
     return cmd
 
 
-async def _kill_process_tree(proc: asyncio.subprocess.Process) -> None:
+async def kill_process_tree(proc: asyncio.subprocess.Process) -> None:
     """Terminate a subprocess and its descendant tree cross-platform."""
     if proc.returncode is not None:
         return
@@ -379,7 +379,7 @@ class DshCliAdapter:
                     timeout=float(timeout_sec),
                 )
             except asyncio.TimeoutError:
-                await _kill_process_tree(proc)
+                await kill_process_tree(proc)
                 artifacts = diff_artifacts(workspace_dir, before_snapshot, output_file=output_file)
                 return TaskResult(
                     status="timeout",

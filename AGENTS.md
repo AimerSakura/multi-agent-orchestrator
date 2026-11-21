@@ -22,9 +22,9 @@
 
 ## 2. 三层模型路由规则（参考 `config/routing-policy.yaml`）
 
-### 层级 1：日常工程主力 —— `codex-worker`（硬锁 `luna`）
+### 层级 1：日常工程主力 —— `codex-worker`（硬锁 `gpt-6-luna` / `gpt-5.6-luna`）
 * **适用场景**：常规单/多文件功能开发、UI 调整、常规 Bug 修复、单元测试补全、接口编写。
-* **硬约束**：`codex-worker` 必须通过 `-c model="luna"` 启动并保持锁定；代码修改优先在独立 Git 分支或 Worktree 中执行。
+* **硬约束**：`codex-worker` 通过 `codex-mcp-bridge`（底层调用新版 Codex `0.171.0+` 的 `codex exec --json`）在代码层面强制白名单锁定 `gpt-6-luna` / `gpt-5.6-luna`（默认 `CODEX_ALLOW_ESCALATION=false`）；涉及较大代码修改时可启用 `worktree=true` 在独立 Git Worktree 中执行。
 
 ### 层级 2：重体力活与方案预研 —— `deepseek-harness`（`dsh-mcp-bridge`）
 * **适用场景**：
@@ -39,21 +39,21 @@
 ### 层级 3：深水区攻坚（受控升级）—— `codex-worker` 旗舰高推理档位
 * **默认禁止自动调用**。
 * **升级熔断机制**：
-  1. 当 `codex-worker (luna)` 在同一问题上**连续失败 2 次**时，**立即停止继续让 Luna 盲试**；
+  1. 当 `codex-worker (gpt-6-luna)` 在同一问题上**连续失败 2 次**时，**立即停止继续让轻量模型盲试**；
   2. 先把报错日志与相关上下文交接给 `deepseek-harness`（`model_tier="reasoner"`）做一次根因分析；
-  3. 若经 DeepSeek 根因分析并指导修复后仍无法解决，或任务属于跨数十文件的核心架构重构 / 复杂并发死锁，**必须先向用户明确申请批准**，获得同意后再升级 Codex 模型档位。
+  3. 若经 DeepSeek 根因分析并指导修复后仍无法解决，或任务属于跨数十文件的核心架构重构 / 复杂并发死锁，**必须先向用户明确申请批准**，获得同意后再临时开启升级或切换至旗舰模型档位。
 
 ---
 
 ## 2.5 已验证 MCP 工具契约（实机校验）
 
-### `codex-worker`（`codex-mcp-server 0.141.0`）
+### `codex-worker`（`codex-mcp-bridge` 封装 Codex `0.171.0+ exec --json`）
+* **`codex_health_check`**：探测新版 Codex CLI 可执行文件、当前默认模型（`gpt-6-luna`）、允许列表及 `CODEX_ALLOW_ESCALATION` 状态。
 * **`codex`**：发起新的 Codex 会话
-  * 必填参数：`prompt`
-  * 推荐参数：传入目标工作目录 `cwd`，且沙盒显式设为 `sandbox="workspace-write"`（**禁止使用 `sandbox="danger-full-access"`**）；需要非交互执行时可使用 `approval-policy="never"` 或 `"on-request"`。
-  * **配额锁定硬规则**：层级 1 调用时**严禁传入 `model` 或 `config.model` 参数**（保持留空），以免覆盖服务端启动参数 `-c model="luna"` 的配额锁定。
+  * 必填参数：`prompt`、`cwd`（必须在 `CODEX_ALLOWED_ROOT` 白名单目录内）
+  * 安全与配额硬约束：`sandbox` 仅允许 `"read-only"` 或 `"workspace-write"`（代码层面已拦截 `danger-full-access`）；`model` 默认留空（使用 `gpt-6-luna`），且仅允许白名单内的 Luna 模型（`gpt-6-luna`、`gpt-5.6-luna`）；需要隔离分支开发时可传 `worktree=true`。
 * **`codex-reply`**：在同一 Codex 会话中继续对话
-  * 必填参数：`prompt` 与 `threadId`（不要使用已弃用的 `conversationId`）。
+  * 必填参数：`thread_id`、`prompt`、`cwd`。
 
 ### `deepseek-harness`（`dsh-mcp-bridge`）
 * **`dsh_health_check`**：探测本地 `dsh` CLI、`codex` CLI、`127.0.0.1:3080` 及备用 API Key 状态。

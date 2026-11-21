@@ -1,4 +1,4 @@
-"""Live MCP stdio smoke test for dsh-mcp-bridge and codex-worker."""
+"""Live MCP stdio smoke test for dsh-mcp-bridge and codex-mcp-bridge."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import argparse
 import asyncio
 import json
 import os
-import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -80,54 +79,74 @@ async def verify_dsh_bridge(repo_root: Path) -> dict[str, Any]:
             return health_payload
 
 
-async def verify_codex_worker() -> dict[str, Any]:
-    """Connect to `codex mcp-server -c model="luna"` over stdio and verify exposed tool schemas."""
-    codex_exe = shutil.which("codex")
-    assert codex_exe, "codex CLI executable was not found in PATH (pass --skip-codex to skip)."
+async def verify_codex_worker(repo_root: Path) -> dict[str, Any]:
+    """Connect to codex-mcp-bridge over stdio and verify tools, health, quota lock, and path guard."""
+    env = os.environ.copy()
+    env["CODEX_ALLOWED_ROOT"] = str(repo_root)
 
     server_params = StdioServerParameters(
-        command=codex_exe,
-        args=["mcp-server", "-c", 'model="luna"'],
+        command=sys.executable,
+        args=["-m", "dsh_mcp_bridge.codex_server"],
+        env=env,
+        cwd=str(repo_root),
     )
 
     async with stdio_client(server_params) as (read_stream, write_stream):
         async with ClientSession(read_stream, write_stream) as session:
-            init_result = await asyncio.wait_for(session.initialize(), timeout=15.0)
-            server_info = getattr(init_result, "server_info", None) or getattr(init_result, "serverInfo", None)
-            server_name = getattr(server_info, "name", "")
-            assert server_name == "codex-mcp-server", (
-                f"Expected server_info.name == 'codex-mcp-server', got: {server_info!r}"
-            )
+            await asyncio.wait_for(session.initialize(), timeout=15.0)
 
             tools_response = await asyncio.wait_for(session.list_tools(), timeout=15.0)
-            tools_by_name = {tool.name: tool for tool in tools_response.tools}
-            expected_tools = {"codex", "codex-reply"}
-            missing = expected_tools - set(tools_by_name)
-            assert not missing, f"Missing expected codex-worker tools: {sorted(missing)}"
+            tool_names = {tool.name for tool in tools_response.tools}
+            expected_tools = {"codex", "codex-reply", "codex_health_check"}
+            missing = expected_tools - tool_names
+            assert not missing, f"Missing expected codex-mcp-bridge tools: {sorted(missing)}"
 
-            codex_schema = getattr(tools_by_name["codex"], "input_schema", None) or getattr(
-                tools_by_name["codex"], "inputSchema", {}
+            health_res = await asyncio.wait_for(session.call_tool("codex_health_check", {}), timeout=15.0)
+            health_payload = _extract_payload(health_res)
+            assert health_payload["codex_cli"]["available"] is True, (
+                f"Codex CLI not available: {health_payload}"
             )
-            codex_props = set((codex_schema or {}).get("properties", {}).keys())
-            for req_prop in ("prompt", "cwd", "sandbox", "model"):
-                assert req_prop in codex_props, f"codex tool schema missing '{req_prop}': {codex_props}"
+            assert health_payload.get("default_model") == "gpt-6-luna", health_payload
 
-            reply_schema = getattr(tools_by_name["codex-reply"], "input_schema", None) or getattr(
-                tools_by_name["codex-reply"], "inputSchema", {}
+            quota_res = await asyncio.wait_for(
+                session.call_tool(
+                    "codex",
+                    {
+                        "prompt": "quota guard check",
+                        "cwd": str(repo_root),
+                        "model": "gpt-6.2-sol",
+                    },
+                ),
+                timeout=15.0,
             )
-            reply_props = set((reply_schema or {}).get("properties", {}).keys())
-            for req_prop in ("prompt", "threadId"):
-                assert req_prop in reply_props, f"codex-reply tool schema missing '{req_prop}': {reply_props}"
+            quota_payload = _extract_payload(quota_res)
+            assert quota_payload.get("status") == "failed", f"Expected quota rejection, got: {quota_payload}"
+            assert "blocked by quota policy" in quota_payload.get("summary", ""), quota_payload
+
+            outside_dir = "C:\\Windows" if os.name == "nt" else "/etc"
+            path_res = await asyncio.wait_for(
+                session.call_tool(
+                    "codex",
+                    {
+                        "prompt": "path guard check",
+                        "cwd": outside_dir,
+                    },
+                ),
+                timeout=15.0,
+            )
+            path_payload = _extract_payload(path_res)
+            assert path_payload.get("status") == "failed", f"Expected path rejection, got: {path_payload}"
+            assert "Security validation failed" in path_payload.get("summary", ""), path_payload
 
             return {
-                "server_name": server_name,
-                "version": getattr(server_info, "version", "unknown"),
-                "tools": sorted(tools_by_name),
+                "tools": sorted(expected_tools),
+                "codex_version": health_payload["codex_cli"].get("version"),
+                "default_model": health_payload.get("default_model"),
             }
 
 
 async def run_smoke_test(*, skip_codex: bool = False) -> None:
-    """Run live MCP stdio checks for dsh-mcp-bridge and optionally codex-worker."""
+    """Run live MCP stdio checks for dsh-mcp-bridge and optionally codex-mcp-bridge."""
     repo_root = Path(__file__).resolve().parent.parent
     health_payload = await verify_dsh_bridge(repo_root)
 
@@ -145,10 +164,13 @@ async def run_smoke_test(*, skip_codex: bool = False) -> None:
         print("MCP smoke test [codex-worker] SKIPPED (--skip-codex)")
         return
 
-    codex_info = await verify_codex_worker()
-    print("MCP smoke test [codex-worker] PASSED:")
-    print(f"  Server info    : {codex_info['server_name']} {codex_info['version']}")
+    codex_info = await verify_codex_worker(repo_root)
+    print("MCP smoke test [codex-worker / codex-mcp-bridge] PASSED:")
     print(f"  Tools verified : {codex_info['tools']}")
+    print(f"  Codex CLI      : {codex_info['codex_version']}")
+    print(f"  Default model  : {codex_info['default_model']}")
+    print("  Quota guard    : PASS (blocked gpt-6.2-sol cleanly)")
+    print("  Whitelist guard: PASS (rejected outside workspace cleanly)")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -157,7 +179,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--skip-codex",
         action="store_true",
-        help="Skip live handshake verification for codex mcp-server.",
+        help="Skip live handshake verification for codex-mcp-bridge.",
     )
     args = parser.parse_args(argv)
 

@@ -1,20 +1,35 @@
 {
   "mcpServers": {
     "codex-worker": {
-      "command": "codex",
+      "command": "uv",
       "args": [
-        "mcp-server",
-        "-c",
-        "model=\"luna\""
-      ]
+        "run",
+        "--no-sync",
+        "--directory",
+        "/ABSOLUTE/PATH/TO/multi-agent-orchestrator/packages/dsh-mcp-bridge",
+        "python",
+        "-m",
+        "dsh_mcp_bridge.codex_server"
+      ],
+      "env": {
+        "CODEX_BIN": "/ABSOLUTE/PATH/TO/codex",
+        "CODEX_DEFAULT_MODEL": "gpt-6-luna",
+        "CODEX_ALLOWED_MODELS": "gpt-6-luna,gpt-5.6-luna",
+        "CODEX_ALLOW_ESCALATION": "false",
+        "CODEX_ALLOWED_ROOT": "/ABSOLUTE/PATH/TO/YOUR/WORKSPACE",
+        "CODEX_DEFAULT_TIMEOUT": "300"
+      }
     },
     "deepseek-harness": {
       "command": "uv",
       "args": [
         "run",
+        "--no-sync",
         "--directory",
         "/ABSOLUTE/PATH/TO/multi-agent-orchestrator/packages/dsh-mcp-bridge",
-        "dsh-mcp-bridge"
+        "python",
+        "-m",
+        "dsh_mcp_bridge.server"
       ],
       "env": {
         "DSH_BASE_URL": "http://127.0.0.1:3080",

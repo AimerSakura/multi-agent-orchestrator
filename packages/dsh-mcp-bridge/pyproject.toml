@@ -22,6 +22,7 @@ dev = [
 
 [project.scripts]
 dsh-mcp-bridge = "dsh_mcp_bridge.server:main"
+codex-mcp-bridge = "dsh_mcp_bridge.codex_server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/dsh_mcp_bridge"]

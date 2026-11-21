@@ -20,9 +20,9 @@
                   v                               v
 +-----------------------------------+   +-----------------------------------+
 |  Worker A: codex-worker           |   |  Worker B: dsh-mcp-bridge         |
-|  `codex mcp-server -c model="luna"`|   |  (Python / MCPServer stdio Server)|
-|  默认模型: luna (硬锁配额保护)     |   |  底层调用: dsh --profile headless |
-|  隔离机制: Git Worktree / 分支     |   |  模型档位: deepseek-flash / v4-pro |
+| (Python / codex-mcp-bridge)       |   | (Python / dsh-mcp-bridge)         |
+|  默认模型: gpt-6-luna (白名单锁)  |   |  底层调用: dsh --profile headless |
+|  隔离机制: sandbox / --worktree   |   |  模型档位: deepseek-flash / v4-pro |
 +-----------------+-----------------+   +-----------------+-----------------+
                   |                                       |
                   +-------------------+-------------------+
@@ -37,7 +37,7 @@
 
 ## 核心特性
 
-* **硬锁配额保护**：`codex-worker` 通过实测 CLI 参数 `codex mcp-server -c model="luna"` 锁定默认模型，避免误触重型旗舰模型消耗大量 ChatGPT Plus 配额。
+* **硬锁配额保护**：`codex-worker` 通过自研 `codex-mcp-bridge` 封装 Codex `0.171.0+` 的 `codex exec --json`，在代码层硬校验 `CODEX_ALLOWED_MODELS`（默认仅放行 `gpt-6-luna`、`gpt-5.6-luna`）与工作区白名单，彻底杜绝误触重型旗舰模型消耗 ChatGPT Plus 配额。
 * **DeepSeek Harness 桥接服务（`dsh-mcp-bridge`）**：基于 Python 3.12+ 与官方 `mcp>=2.0` SDK（`MCPServer`）构建，封装 `dsh --profile headless --json --patch ...` 供任意 MCP Client 直接调用。
 * **文件驱动交接（`.agent-handoff/`）**：中间调研报告、清洗数据、接口契约通过文件路径交接，避免大段文本在上下文中反复搬运。
 * **纵深安全控制**：严格校验 `workspace_dir` 与 `output_file` 必须在 `DSH_ALLOWED_ROOT` 白名单目录内；超时强杀子进程树；支持 `resume`（原生 `--session-id`）与 `fork`（轨迹分叉）重试。
@@ -47,7 +47,7 @@
 ## 前置依赖
 
 * **Python 3.12+** 与 **[uv](https://docs.astral.sh/uv/)**（推荐 `0.7+`）
-* **OpenAI Codex CLI**（已实测 `codex-cli 0.141.0`）
+* **OpenAI Codex CLI / Codex Desktop App**（已实测 `0.171.0-alpha.13` `exec --json`）
 * **DeepSeek Harness (`dsh`)**（已实测 `0.2.0-rc.2`）
 * **Git**
 
@@ -70,7 +70,7 @@ uv run pytest -v
 ```
 
 > **Windows 跨盘符环境提示**：若仓库放在非系统盘（如 `D:\`）且 `uv sync` 查询 `.venv\Scripts\python.exe` 出现 `0xc06d007e` 错误，可将 `UV_PROJECT_ENVIRONMENT` 指向 `C:\` 上的目录，例如：
-> `$env:UV_PROJECT_ENVIRONMENT = "$env:LOCALAPPDATA\uv-envs\dsh-mcp-bridge"`
+> `$env:UV_PROJECT_ENVIRONMENT = "$env:LOCALAPPDATA\uv-envs\multi-agent-orchestrator"`
 
 ### 3. 运行双服务端 MCP stdio 冒烟测试
 
@@ -78,11 +78,11 @@ uv run pytest -v
 uv run --directory packages\dsh-mcp-bridge python ..\..\scripts\smoke_test.py
 ```
 
-`smoke_test.py` 会依次通过真实 `stdio` 连接验证 `dsh-mcp-bridge` 与 `codex mcp-server -c model="luna"` 的握手、Tool 列表及白名单拦截（如仅测桥接层可追加 `--skip-codex`）。
+`smoke_test.py` 会依次通过真实 `stdio` 连接验证 `dsh-mcp-bridge` 与 `codex-mcp-bridge` 的握手、Tool 列表、模型配额拦截及路径白名单拦截（如仅测 `dsh` 桥接层可追加 `--skip-codex`）。
 
 ### 4. 生成本地 MCP 配置并接入主控端
 
-运行脚本自动生成包含本机绝对路径与 Windows `UV_PROJECT_ENVIRONMENT` 的配置（已加入 `.gitignore`，不会提交到 Git）：
+运行脚本自动生成包含本机绝对路径与 Windows `UV_PROJECT_ENVIRONMENT` 的配置（已加入 `.gitignore`，不会提交到 Git；可通过 `-CodexModel` 覆盖默认 `gpt-6-luna`）：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\render-mcp-config.ps1

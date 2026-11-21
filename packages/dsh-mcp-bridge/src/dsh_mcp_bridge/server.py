@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import shutil
 from pathlib import Path
 from typing import Any, Literal
 
@@ -18,6 +17,7 @@ from dsh_mcp_bridge.adapters import (
     TaskResult,
 )
 from dsh_mcp_bridge.adapters.dsh_cli import wrap_command_for_platform
+from dsh_mcp_bridge.codex_bridge import discover_codex_executable
 from dsh_mcp_bridge.config import BridgeConfig, VALID_MODEL_TIERS
 from dsh_mcp_bridge.logger import TrajectoryRecord, TrajectoryStore, get_logger
 from dsh_mcp_bridge.security import (
@@ -30,7 +30,7 @@ _LOGGER = get_logger("dsh_mcp_bridge.server")
 
 
 async def _probe_codex_cli() -> dict[str, Any]:
-    executable = shutil.which("codex")
+    executable = discover_codex_executable()
     if not executable:
         return {"available": False, "executable": None, "version": None}
 
