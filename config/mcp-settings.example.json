@@ -1,0 +1,27 @@
+{
+  "mcpServers": {
+    "codex-worker": {
+      "command": "codex",
+      "args": [
+        "mcp-server",
+        "-c",
+        "model=\"luna\""
+      ]
+    },
+    "deepseek-harness": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/ABSOLUTE/PATH/TO/multi-agent-orchestrator/packages/dsh-mcp-bridge",
+        "dsh-mcp-bridge"
+      ],
+      "env": {
+        "DSH_BASE_URL": "http://127.0.0.1:3080",
+        "DSH_ALLOWED_ROOT": "/ABSOLUTE/PATH/TO/YOUR/WORKSPACE",
+        "DSH_DEFAULT_TIMEOUT": "300",
+        "DSH_APPROVAL_POLICY": "never"
+      }
+    }
+  }
+}

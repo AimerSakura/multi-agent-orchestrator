@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dsh-mcp-bridge"
+version = "0.1.0"
+description = "MCP stdio bridge for DeepSeek Harness (dsh)"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+    "mcp>=2.0.0",
+    "httpx>=0.27.0",
+    "pyyaml>=6.0.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[project.scripts]
+dsh-mcp-bridge = "dsh_mcp_bridge.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dsh_mcp_bridge"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

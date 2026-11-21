@@ -1,0 +1,60 @@
+version: 1
+orchestrator:
+  name: multi-agent-orchestrator
+  handoff_dir: .agent-handoff
+  direct_execution_threshold:
+    max_files: 1
+    max_changed_lines: 20
+
+tiers:
+  tier1_daily_engineering:
+    worker: codex-worker
+    model: luna
+    locked_via_cli_flag: '-c model="luna"'
+    isolation: git-worktree-or-branch
+    use_cases:
+      - feature-implementation
+      - ui-adjustments
+      - routine-bugfix
+      - unit-tests
+      - api-endpoints
+
+  tier2_heavy_and_exploration:
+    worker: deepseek-harness
+    mcp_server: dsh-mcp-bridge
+    default_tier: flash
+    model_mapping:
+      flash: deepseek-flash
+      reasoner: deepseek-v4-pro
+      default: deepseek-flash
+    use_cases:
+      - pre-coding-research
+      - schema-and-algorithm-design
+      - high-iteration-experiments
+      - bulk-file-cleaning
+      - office-automation
+      - trajectory-audited-tasks
+
+  tier3_controlled_escalation:
+    worker: codex-worker
+    enabled_by_default: false
+    require_user_approval: true
+    use_cases:
+      - cross-module-core-refactor
+      - complex-concurrency-deadlock
+      - post-circuit-breaker-escalation
+
+circuit_breaker:
+  max_luna_consecutive_failures: 2
+  on_threshold_reached:
+    - stop_luna_retries
+    - route_error_context_to: deepseek-harness
+      model_tier: reasoner
+    - require_explicit_user_approval_before_tier3: true
+
+security:
+  enforce_allowed_root: true
+  default_timeout_sec: 300
+  max_timeout_sec: 1800
+  max_log_chars: 4000
+  allow_api_fallback: false
