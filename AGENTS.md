@@ -45,6 +45,23 @@
 
 ---
 
+## 2.5 已验证 MCP 工具契约（实机校验）
+
+### `codex-worker`（`codex-mcp-server 0.141.0`）
+* **`codex`**：发起新的 Codex 会话
+  * 必填参数：`prompt`
+  * 推荐参数：传入目标工作目录 `cwd`，且沙盒显式设为 `sandbox="workspace-write"`（**禁止使用 `sandbox="danger-full-access"`**）；需要非交互执行时可使用 `approval-policy="never"` 或 `"on-request"`。
+  * **配额锁定硬规则**：层级 1 调用时**严禁传入 `model` 或 `config.model` 参数**（保持留空），以免覆盖服务端启动参数 `-c model="luna"` 的配额锁定。
+* **`codex-reply`**：在同一 Codex 会话中继续对话
+  * 必填参数：`prompt` 与 `threadId`（不要使用已弃用的 `conversationId`）。
+
+### `deepseek-harness`（`dsh-mcp-bridge`）
+* **`dsh_health_check`**：探测本地 `dsh` CLI、`codex` CLI、`127.0.0.1:3080` 及备用 API Key 状态。
+* **`dsh_run_task`**：下发批处理、调研或长循环任务（默认 `model_tier="flash"`；复杂根因分析或方案推演传 `model_tier="reasoner"`；大产物配合 `output_file` 写入 `.agent-handoff/<task_id>/`）。
+* **`dsh_resume_or_fork`**：基于历史 `trajectory_id` 执行 `resume`（原生会话续接）或 `fork`（派生新分支重跑）。
+
+---
+
 ## 3. 跨 Agent 产物交接规范（`.agent-handoff/`）
 
 * 所有跨 Agent 传递的中间产物（调研报告、接口契约、清洗后的 JSON、根因分析报告）**统一写入 `.agent-handoff/<task_id>/`**（该目录已加入 `.gitignore`）。

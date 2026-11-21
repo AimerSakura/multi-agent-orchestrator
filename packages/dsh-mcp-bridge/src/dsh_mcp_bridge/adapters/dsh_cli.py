@@ -126,7 +126,8 @@ def build_patch_yaml(model_name: str, approval_policy: str) -> str:
     return yaml.safe_dump(entries, sort_keys=False, allow_unicode=True)
 
 
-def _wrap_command_for_platform(cmd: list[str]) -> list[str]:
+def wrap_command_for_platform(cmd: list[str]) -> list[str]:
+    """Wrap Windows .cmd/.bat shims with cmd.exe so asyncio subprocesses execute reliably."""
     if os.name == "nt" and cmd[0].lower().endswith((".cmd", ".bat")):
         return ["cmd.exe", "/d", "/c", *cmd]
     return cmd
@@ -197,7 +198,7 @@ class DshCliAdapter:
         if session_id:
             cmd.extend(["--session-id", session_id])
         cmd.append("-")
-        return _wrap_command_for_platform(cmd)
+        return wrap_command_for_platform(cmd)
 
     async def check_health(self) -> dict[str, Any]:
         """Probe whether `dsh` CLI exists and responds to `--version`."""
@@ -210,7 +211,7 @@ class DshCliAdapter:
                 "error": f"Executable '{self.config.dsh_bin}' not found in PATH.",
             }
 
-        cmd = _wrap_command_for_platform([executable, "--version"])
+        cmd = wrap_command_for_platform([executable, "--version"])
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,

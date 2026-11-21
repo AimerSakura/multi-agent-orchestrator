@@ -109,6 +109,7 @@ async def test_server_registers_all_tools_and_health_hides_secret(tmp_path: Path
     assert health["ready"] is True
     assert health["dsh_cli"]["available"] is True
     assert health["dsh_http"]["reachable"] is True
+    assert "codex_cli" in health
     assert health["deepseek_api_key_configured"] is True
     assert secret not in json.dumps(health)
 

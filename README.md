@@ -72,15 +72,26 @@ uv run pytest -v
 > **Windows 跨盘符环境提示**：若仓库放在非系统盘（如 `D:\`）且 `uv sync` 查询 `.venv\Scripts\python.exe` 出现 `0xc06d007e` 错误，可将 `UV_PROJECT_ENVIRONMENT` 指向 `C:\` 上的目录，例如：
 > `$env:UV_PROJECT_ENVIRONMENT = "$env:LOCALAPPDATA\uv-envs\dsh-mcp-bridge"`
 
-### 3. 运行 MCP stdio 冒烟测试
+### 3. 运行双服务端 MCP stdio 冒烟测试
 
 ```powershell
 uv run --directory packages\dsh-mcp-bridge python ..\..\scripts\smoke_test.py
 ```
 
-### 4. 配置主控端 MCP Servers
+`smoke_test.py` 会依次通过真实 `stdio` 连接验证 `dsh-mcp-bridge` 与 `codex mcp-server -c model="luna"` 的握手、Tool 列表及白名单拦截（如仅测桥接层可追加 `--skip-codex`）。
 
-参考 [config/mcp-settings.example.json](config/mcp-settings.example.json)，将路径替换为你本机的绝对路径后，合并至 `~/.gemini/settings.json` 或 Antigravity MCP 配置中。
+### 4. 生成本地 MCP 配置并接入主控端
+
+运行脚本自动生成包含本机绝对路径与 Windows `UV_PROJECT_ENVIRONMENT` 的配置（已加入 `.gitignore`，不会提交到 Git）：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\render-mcp-config.ps1
+```
+
+然后将生成的 `config/mcp-settings.local.json`（或参考模板 [config/mcp-settings.example.json](config/mcp-settings.example.json)）中的 `mcpServers` 项合并至对应客户端配置：
+
+* **Antigravity**：`~/.gemini/config/mcp_config.json`（可在界面 **Additional Options (...) > MCP Servers** 查看连接状态）
+* **Gemini CLI**：`~/.gemini/settings.json`
 
 ---
 

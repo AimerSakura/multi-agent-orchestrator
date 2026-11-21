@@ -21,6 +21,7 @@ htmlcov/
 .env
 .env.*
 !.env.example
+config/mcp-settings.local.json
 
 # Logs & OS artifacts
 *.log

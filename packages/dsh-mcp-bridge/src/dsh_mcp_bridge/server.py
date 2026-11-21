@@ -17,6 +17,7 @@ from dsh_mcp_bridge.adapters import (
     RunTaskRequest,
     TaskResult,
 )
+from dsh_mcp_bridge.adapters.dsh_cli import wrap_command_for_platform
 from dsh_mcp_bridge.config import BridgeConfig, VALID_MODEL_TIERS
 from dsh_mcp_bridge.logger import TrajectoryRecord, TrajectoryStore, get_logger
 from dsh_mcp_bridge.security import (
@@ -34,9 +35,9 @@ async def _probe_codex_cli() -> dict[str, Any]:
         return {"available": False, "executable": None, "version": None}
 
     try:
+        cmd = wrap_command_for_platform([executable, "--version"])
         proc = await asyncio.create_subprocess_exec(
-            executable,
-            "--version",
+            *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
