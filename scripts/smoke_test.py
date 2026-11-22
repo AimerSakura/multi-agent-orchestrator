@@ -50,7 +50,13 @@ async def verify_dsh_bridge(repo_root: Path) -> dict[str, Any]:
 
             tools_response = await asyncio.wait_for(session.list_tools(), timeout=15.0)
             tool_names = {tool.name for tool in tools_response.tools}
-            expected = {"dsh_health_check", "dsh_run_task", "dsh_resume_or_fork"}
+            expected = {
+                "dsh_health_check",
+                "dsh_run_task",
+                "dsh_resume_or_fork",
+                "dsh_list_sessions",
+                "dsh_read_session",
+            }
             missing = expected - tool_names
             assert not missing, f"Missing expected dsh-mcp-bridge tools: {sorted(missing)}"
 
@@ -97,7 +103,13 @@ async def verify_codex_worker(repo_root: Path) -> dict[str, Any]:
 
             tools_response = await asyncio.wait_for(session.list_tools(), timeout=15.0)
             tool_names = {tool.name for tool in tools_response.tools}
-            expected_tools = {"codex", "codex-reply", "codex_health_check"}
+            expected_tools = {
+                "codex",
+                "codex-reply",
+                "codex_health_check",
+                "codex_list_threads",
+                "codex_read_thread",
+            }
             missing = expected_tools - tool_names
             assert not missing, f"Missing expected codex-mcp-bridge tools: {sorted(missing)}"
 
@@ -142,6 +154,7 @@ async def verify_codex_worker(repo_root: Path) -> dict[str, Any]:
                 "tools": sorted(expected_tools),
                 "codex_version": health_payload["codex_cli"].get("version"),
                 "default_model": health_payload.get("default_model"),
+                "backend": health_payload.get("backend"),
             }
 
 
@@ -151,7 +164,10 @@ async def run_smoke_test(*, skip_codex: bool = False) -> None:
     health_payload = await verify_dsh_bridge(repo_root)
 
     print("MCP smoke test [dsh-mcp-bridge] PASSED:")
-    print("  Tools verified : ['dsh_health_check', 'dsh_resume_or_fork', 'dsh_run_task']")
+    print(
+        "  Tools verified : "
+        "['dsh_health_check', 'dsh_list_sessions', 'dsh_read_session', 'dsh_resume_or_fork', 'dsh_run_task']"
+    )
     print(f"  dsh_cli avail  : {health_payload['dsh_cli'].get('available')}")
     print(f"  dsh_http reach : {health_payload['dsh_http'].get('reachable')}")
     print(
@@ -167,6 +183,7 @@ async def run_smoke_test(*, skip_codex: bool = False) -> None:
     codex_info = await verify_codex_worker(repo_root)
     print("MCP smoke test [codex-worker / codex-mcp-bridge] PASSED:")
     print(f"  Tools verified : {codex_info['tools']}")
+    print(f"  Backend        : {codex_info['backend']}")
     print(f"  Codex CLI      : {codex_info['codex_version']}")
     print(f"  Default model  : {codex_info['default_model']}")
     print("  Quota guard    : PASS (blocked gpt-6.2-sol cleanly)")

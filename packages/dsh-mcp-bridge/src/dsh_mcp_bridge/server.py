@@ -19,6 +19,7 @@ from dsh_mcp_bridge.adapters import (
 from dsh_mcp_bridge.adapters.dsh_cli import wrap_command_for_platform
 from dsh_mcp_bridge.codex_bridge import discover_codex_executable
 from dsh_mcp_bridge.config import BridgeConfig, VALID_MODEL_TIERS
+from dsh_mcp_bridge.dsh_sessions import list_dsh_sessions, read_dsh_session, resolve_dsh_home
 from dsh_mcp_bridge.logger import TrajectoryRecord, TrajectoryStore, get_logger
 from dsh_mcp_bridge.security import (
     PathSecurityError,
@@ -265,6 +266,38 @@ def create_server(
         result = await cli.resume_or_fork(request)
         _record_result(trajectory_store, result, validated_workspace, model_tier)
         return result.to_dict()
+
+    @mcp.tool()
+    async def dsh_list_sessions(
+        workspace_dir: str | None = None,
+        limit: int = 20,
+        search_term: str | None = None,
+    ) -> dict[str, Any]:
+        """List native DeepSeek Harness sessions from DSH storage."""
+        dsh_home = resolve_dsh_home(cfg.dsh_home)
+        return await asyncio.to_thread(
+            list_dsh_sessions,
+            dsh_home,
+            workspace_dir=workspace_dir,
+            limit=limit,
+            search_term=search_term,
+        )
+
+    @mcp.tool()
+    async def dsh_read_session(
+        session_id: str,
+        max_turns: int = 20,
+        max_chars_per_message: int = 4000,
+    ) -> dict[str, Any]:
+        """Read native DeepSeek Harness conversation turns from session storage."""
+        dsh_home = resolve_dsh_home(cfg.dsh_home)
+        return await asyncio.to_thread(
+            read_dsh_session,
+            dsh_home,
+            session_id=session_id,
+            max_turns=max_turns,
+            max_chars_per_message=max_chars_per_message,
+        )
 
     return mcp
 

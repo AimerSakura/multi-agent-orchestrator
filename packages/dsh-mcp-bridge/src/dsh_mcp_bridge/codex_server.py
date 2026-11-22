@@ -25,6 +25,7 @@ def create_codex_server(
         cli_status = await exec_adapter.check_health()
         return {
             "ready": bool(cli_status.get("available")),
+            "backend": cfg.backend,
             "codex_cli": cli_status,
             "default_model": cfg.default_model,
             "allowed_models": list(cfg.allowed_models),
@@ -58,6 +59,7 @@ def create_codex_server(
         prompt: str,
         cwd: str,
         model: str | None = None,
+        sandbox: Literal["read-only", "workspace-write"] | None = None,
         timeout_sec: int | None = None,
     ) -> dict[str, Any]:
         """Continue an existing Codex thread by thread_id inside allowed_root."""
@@ -66,7 +68,36 @@ def create_codex_server(
             prompt=prompt,
             cwd=cwd,
             model=model,
+            sandbox=sandbox,
             timeout_sec=timeout_sec,
+        )
+
+    @mcp.tool()
+    async def codex_list_threads(
+        cwd: str | None = None,
+        limit: int = 20,
+        include_exec: bool = False,
+        search_term: str | None = None,
+    ) -> dict[str, Any]:
+        """List persistent Codex threads (Desktop/CLI interactive threads by default)."""
+        return await exec_adapter.list_threads(
+            cwd=cwd,
+            limit=limit,
+            include_exec=include_exec,
+            search_term=search_term,
+        )
+
+    @mcp.tool()
+    async def codex_read_thread(
+        thread_id: str,
+        max_turns: int = 20,
+        max_chars_per_message: int = 4000,
+    ) -> dict[str, Any]:
+        """Read full turn and message history from a persistent Codex thread."""
+        return await exec_adapter.read_thread(
+            thread_id=thread_id,
+            max_turns=max_turns,
+            max_chars_per_message=max_chars_per_message,
         )
 
     return mcp

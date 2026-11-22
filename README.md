@@ -37,17 +37,18 @@
 
 ## 核心特性
 
-* **硬锁配额保护**：`codex-worker` 通过自研 `codex-mcp-bridge` 封装 Codex `0.171.0+` 的 `codex exec --json`，在代码层硬校验 `CODEX_ALLOWED_MODELS`（默认仅放行 `gpt-6-luna`、`gpt-5.6-luna`）与工作区白名单，彻底杜绝误触重型旗舰模型消耗 ChatGPT Plus 配额。
-* **DeepSeek Harness 桥接服务（`dsh-mcp-bridge`）**：基于 Python 3.12+ 与官方 `mcp>=2.0` SDK（`MCPServer`）构建，封装 `dsh --profile headless --json --patch ...` 供任意 MCP Client 直接调用。
+* **原生桌面持久化会话与硬锁配额保护**：`codex-worker` 通过自研 `codex-mcp-bridge` 默认调用 Codex `0.171.0+` 的 `codex app-server --listen stdio://` 协议，在代码层硬校验 `CODEX_ALLOWED_MODELS`（默认仅放行 `gpt-6-luna`、`gpt-5.6-luna`）与工作区白名单，同时生成的会话直接为 Codex Desktop 可见的 `source="vscode"` 持久化会话；传 `worktree=true` 或设 `CODEX_BACKEND=exec` 时回退至 `codex exec --json`。
+* **DeepSeek Harness 桥接服务（`dsh-mcp-bridge`）**：基于 Python 3.12+ 与官方 `mcp>=2.0` SDK（`MCPServer`）构建，封装 `dsh --profile headless --json --patch ...` 供任意 MCP Client 直接调用，并支持读取 `~/.dsh` 原生会话历史。
+* **双向原生会话可读**：提供 `codex_list_threads` / `codex_read_thread` 与 `dsh_list_sessions` / `dsh_read_session`，使主控端可直接读取 Desktop App 与 CLI 的完整历史上下文，减少孤立一次性会话。
 * **文件驱动交接（`.agent-handoff/`）**：中间调研报告、清洗数据、接口契约通过文件路径交接，避免大段文本在上下文中反复搬运。
-* **纵深安全控制**：严格校验 `workspace_dir` 与 `output_file` 必须在 `DSH_ALLOWED_ROOT` 白名单目录内；超时强杀子进程树；支持 `resume`（原生 `--session-id`）与 `fork`（轨迹分叉）重试。
+* **纵深安全控制**：严格校验 `workspace_dir`、`cwd` 与 `output_file` 必须在允许的工作区根目录白名单内；超时强杀子进程树；支持 `resume`（原生续接）与 `fork`（轨迹分叉）重试。
 
 ---
 
 ## 前置依赖
 
 * **Python 3.12+** 与 **[uv](https://docs.astral.sh/uv/)**（推荐 `0.7+`）
-* **OpenAI Codex CLI / Codex Desktop App**（已实测 `0.171.0-alpha.13` `exec --json`）
+* **OpenAI Codex CLI / Codex Desktop App**（已实测 `0.171.0-alpha.13` `app-server` 与 `exec --json`）
 * **DeepSeek Harness (`dsh`)**（已实测 `0.2.0-rc.2`）
 * **Git**
 
@@ -95,13 +96,27 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\render-mcp-config.
 
 ---
 
-## `dsh-mcp-bridge` 暴露的 MCP Tools
+## 暴露的 MCP Tools
+
+### `dsh-mcp-bridge`
 
 | Tool 名称 | 说明 | 核心参数 |
 | --- | --- | --- |
 | `dsh_health_check` | 探测 `dsh` CLI、`codex` CLI、`127.0.0.1:3080` 端口及备用 API Key 状态 | 无 |
 | `dsh_run_task` | 通过 `dsh --profile headless --json` 执行任务并追踪产物与 `trajectory_id` | `task_prompt`, `workspace_dir`, `output_file?`, `model_tier?`, `timeout_sec?` |
 | `dsh_resume_or_fork` | 从历史 `trajectory_id` 恢复会话（`resume`）或分叉出新分支继续（`fork`） | `trajectory_id`, `mode?`, `new_instruction?`, `workspace_dir?`, `model_tier?`, `timeout_sec?` |
+| `dsh_list_sessions` | 只读检索 `~/.dsh` 原生会话列表（来自 `session_projcache`） | `workspace_dir?`, `limit?`, `search_term?` |
+| `dsh_read_session` | 只读读取指定 `dsh` 会话多轮历史（优先解压 `.v4.jsonl.zstd`，自动降级摘要） | `session_id`, `max_turns?`, `max_chars_per_message?` |
+
+### `codex-worker` (`codex-mcp-bridge`)
+
+| Tool 名称 | 说明 | 核心参数 |
+| --- | --- | --- |
+| `codex_health_check` | 探测 Codex CLI、后端协议（默认 `app-server`）、默认模型及配额白名单 | 无 |
+| `codex` | 发起 Codex 持久化会话（默认生成 Desktop 可见的 `source="vscode"` 会话；传 `worktree=true` 走 `exec --worktree`） | `prompt`, `cwd`, `sandbox?`, `model?`, `worktree?`, `timeout_sec?` |
+| `codex-reply` | 沿用已有 `thread_id` 继续对话 | `thread_id`, `prompt`, `cwd`, `model?`, `sandbox?`, `timeout_sec?` |
+| `codex_list_threads` | 只读检索 Codex Desktop/CLI 持久化会话列表 | `cwd?`, `limit?`, `include_exec?`, `search_term?` |
+| `codex_read_thread` | 只读读取指定 Codex 会话的历史轮次与消息摘要 | `thread_id`, `max_turns?`, `max_chars_per_message?` |
 
 ### 环境变量
 

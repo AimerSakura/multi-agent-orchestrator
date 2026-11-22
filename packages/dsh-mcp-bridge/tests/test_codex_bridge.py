@@ -45,6 +45,70 @@ class _FakeCodexProcess:
         return self.returncode if self.returncode is not None else -9
 
 
+class _FakeAppServerStdin:
+    def __init__(self, on_message: Any) -> None:
+        self._buffer = bytearray()
+        self._on_message = on_message
+        self.messages: list[dict[str, Any]] = []
+        self.closed = False
+
+    def write(self, data: bytes) -> None:
+        self._buffer.extend(data)
+        while b"\n" in self._buffer:
+            raw_line, _, rest = self._buffer.partition(b"\n")
+            self._buffer = bytearray(rest)
+            line = raw_line.decode("utf-8", errors="replace").strip()
+            if not line:
+                continue
+            msg = json.loads(line)
+            self.messages.append(msg)
+            self._on_message(msg)
+
+    async def drain(self) -> None:
+        return None
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _FakeAppServerProcess:
+    def __init__(
+        self,
+        responder: Any,
+        *,
+        stderr_bytes: bytes = b"",
+    ) -> None:
+        self.pid = 52525
+        self.returncode: int | None = None
+        self.stdout = asyncio.StreamReader(limit=16 * 1024 * 1024)
+        self.stderr = asyncio.StreamReader(limit=1024 * 1024)
+        if stderr_bytes:
+            self.stderr.feed_data(stderr_bytes)
+        self.stderr.feed_eof()
+        self.stdin = _FakeAppServerStdin(lambda msg: responder(msg, self))
+        self.terminated = False
+        self.killed = False
+
+    def feed_json(self, payload: dict[str, Any]) -> None:
+        self.stdout.feed_data((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
+
+    def terminate(self) -> None:
+        self.terminated = True
+        if self.returncode is None:
+            self.returncode = 0
+        self.stdout.feed_eof()
+
+    def kill(self) -> None:
+        self.killed = True
+        self.returncode = -9
+        self.stdout.feed_eof()
+
+    async def wait(self) -> int:
+        if self.returncode is None:
+            self.returncode = 0
+        return self.returncode
+
+
 def _extract_tool_dict(call_result: Any) -> dict[str, Any]:
     if isinstance(call_result, tuple):
         for part in call_result:
@@ -139,7 +203,7 @@ async def test_codex_run_and_reply_executes_expected_flags_and_artifacts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    cfg = CodexConfig(allowed_root=tmp_path, windows_sandbox="elevated")
+    cfg = CodexConfig(allowed_root=tmp_path, windows_sandbox="elevated", backend="exec")
     adapter = CodexExecAdapter(cfg)
     monkeypatch.setattr(adapter, "find_executable", lambda: r"C:\Program Files\WindowsApps\OpenAI.Codex\codex.exe")
 
@@ -178,6 +242,7 @@ async def test_codex_run_and_reply_executes_expected_flags_and_artifacts(
         worktree=True,
     )
     assert run_res["status"] == "success"
+    assert run_res["backend"] == "exec"
     assert run_res["thread_id"] == "thread-abc"
     assert run_res["model"] == "gpt-6-luna"
     assert run_res["summary"] == "Created file"
@@ -197,6 +262,7 @@ async def test_codex_run_and_reply_executes_expected_flags_and_artifacts(
         model="gpt-5.6-luna",
     )
     assert reply_res["status"] == "success"
+    assert reply_res["backend"] == "exec"
     assert reply_res["thread_id"] == "thread-abc"
     assert reply_res["model"] == "gpt-5.6-luna"
     assert reply_res["summary"] == "Resumed OK"
@@ -207,11 +273,393 @@ async def test_codex_run_and_reply_executes_expected_flags_and_artifacts(
 
 
 @pytest.mark.asyncio
+async def test_codex_worktree_falls_back_to_exec_when_backend_is_app_server(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = CodexConfig(allowed_root=tmp_path, backend="app-server", windows_sandbox="elevated")
+    adapter = CodexExecAdapter(cfg)
+    monkeypatch.setattr(adapter, "find_executable", lambda: "/fake/codex")
+
+    seen_cmds: list[list[str]] = []
+
+    async def fake_exec(*cmd: str, **kwargs: Any) -> _FakeCodexProcess:
+        seen_cmds.append(list(cmd))
+        stdout = "\n".join(
+            [
+                json.dumps({"type": "thread.started", "thread_id": "thread-wt"}),
+                json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "Worktree OK"}}),
+                json.dumps({"type": "turn.completed", "usage": {"input_tokens": 20, "output_tokens": 4}}),
+            ]
+        ).encode("utf-8")
+        return _FakeCodexProcess(returncode=0, stdout=stdout)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    res = await adapter.run_session(
+        prompt="Worktree task",
+        cwd=str(tmp_path),
+        sandbox="workspace-write",
+        worktree=True,
+    )
+    assert res["status"] == "success"
+    assert res["backend"] == "exec"
+    assert res["thread_id"] == "thread-wt"
+    assert seen_cmds[0][1] == "exec"
+    assert "--worktree" in seen_cmds[0]
+
+
+@pytest.mark.asyncio
+async def test_codex_app_server_run_and_reply_creates_vscode_thread_and_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = CodexConfig(allowed_root=tmp_path, backend="app-server", windows_sandbox="elevated")
+    adapter = CodexExecAdapter(cfg)
+    monkeypatch.setattr(adapter, "find_executable", lambda: r"C:\Program Files\WindowsApps\OpenAI.Codex\codex.exe")
+
+    spawned: list[_FakeAppServerProcess] = []
+    spawn_cmds: list[list[str]] = []
+
+    def responder(msg: dict[str, Any], proc: _FakeAppServerProcess) -> None:
+        method = msg.get("method")
+        req_id = msg.get("id")
+        if method == "initialize":
+            proc.feed_json({"jsonrpc": "2.0", "id": req_id, "result": {"userAgent": "multi-agent-orchestrator/0.171"}})
+        elif method == "thread/start":
+            proc.feed_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "thread": {
+                            "id": "thread-app-001",
+                            "source": "vscode",
+                            "cwd": str(tmp_path),
+                        },
+                        "model": "gpt-6-luna",
+                    },
+                }
+            )
+        elif method == "thread/resume":
+            proc.feed_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "thread": {
+                            "id": msg["params"]["threadId"],
+                            "source": "vscode",
+                            "cwd": str(tmp_path),
+                        }
+                    },
+                }
+            )
+        elif method == "turn/start":
+            proc.feed_json({"jsonrpc": "2.0", "id": req_id, "result": {"turn": {"id": "turn-1", "status": "inProgress"}}})
+            if msg["params"]["threadId"] == "thread-app-001" and msg["params"]["input"][0]["text"] == "Create file":
+                (tmp_path / "app_out.py").write_text("x = 1\n", encoding="utf-8")
+                text = "Created app_out.py"
+            else:
+                text = "Follow-up complete"
+            proc.feed_json(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "item/completed",
+                    "params": {
+                        "threadId": msg["params"]["threadId"],
+                        "turnId": "turn-1",
+                        "item": {"id": "item-1", "type": "agentMessage", "text": text},
+                    },
+                }
+            )
+            proc.feed_json(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "thread/tokenUsage/updated",
+                    "params": {
+                        "threadId": msg["params"]["threadId"],
+                        "tokenUsage": {
+                            "last": {
+                                "inputTokens": 200,
+                                "cachedInputTokens": 120,
+                                "outputTokens": 15,
+                                "reasoningOutputTokens": 0,
+                                "totalTokens": 215,
+                            }
+                        },
+                    },
+                }
+            )
+            proc.feed_json(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "turn/completed",
+                    "params": {
+                        "threadId": msg["params"]["threadId"],
+                        "turn": {"id": "turn-1", "status": "completed", "error": None},
+                    },
+                }
+            )
+
+    async def fake_exec(*cmd: str, **kwargs: Any) -> _FakeAppServerProcess:
+        spawn_cmds.append(list(cmd))
+        proc = _FakeAppServerProcess(responder)
+        spawned.append(proc)
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    run_res = await adapter.run_session(
+        prompt="Create file",
+        cwd=str(tmp_path),
+        sandbox="workspace-write",
+    )
+    assert run_res["status"] == "success"
+    assert run_res["backend"] == "app-server"
+    assert run_res["source"] == "vscode"
+    assert run_res["thread_id"] == "thread-app-001"
+    assert run_res["model"] == "gpt-6-luna"
+    assert run_res["summary"] == "Created app_out.py"
+    assert run_res["usage"] == {
+        "input_tokens": 200,
+        "cached_input_tokens": 120,
+        "output_tokens": 15,
+        "reasoning_output_tokens": 0,
+        "total_tokens": 215,
+    }
+    assert str((tmp_path / "app_out.py").resolve()) in run_res["artifacts"]
+    assert spawn_cmds[0][1:4] == ["app-server", "--listen", "stdio://"]
+
+    start_msg = next(m for m in spawned[0].stdin.messages if m.get("method") == "thread/start")
+    assert start_msg["params"]["ephemeral"] is False
+    assert start_msg["params"]["model"] == "gpt-6-luna"
+    assert start_msg["params"]["sandbox"] == "workspace-write"
+
+    reply_res = await adapter.reply_session(
+        thread_id="thread-app-001",
+        prompt="Explain it",
+        cwd=str(tmp_path),
+        model="gpt-5.6-luna",
+        sandbox="read-only",
+    )
+    assert reply_res["status"] == "success"
+    assert reply_res["backend"] == "app-server"
+    assert reply_res["source"] == "vscode"
+    assert reply_res["thread_id"] == "thread-app-001"
+    assert reply_res["model"] == "gpt-5.6-luna"
+    assert reply_res["summary"] == "Follow-up complete"
+
+    resume_msg = next(m for m in spawned[1].stdin.messages if m.get("method") == "thread/resume")
+    assert resume_msg["params"]["threadId"] == "thread-app-001"
+    assert resume_msg["params"]["sandbox"] == "read-only"
+    turn_msg = next(m for m in spawned[1].stdin.messages if m.get("method") == "turn/start")
+    assert turn_msg["params"]["sandboxPolicy"] == {"type": "readOnly", "networkAccess": False}
+
+
+@pytest.mark.asyncio
+async def test_codex_app_server_rejects_server_requests_without_deadlock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = CodexExecAdapter(CodexConfig(allowed_root=tmp_path, backend="app-server"))
+    monkeypatch.setattr(adapter, "find_executable", lambda: "/fake/codex")
+
+    captured: list[_FakeAppServerProcess] = []
+
+    def responder(msg: dict[str, Any], proc: _FakeAppServerProcess) -> None:
+        method = msg.get("method")
+        req_id = msg.get("id")
+        if method == "initialize":
+            proc.feed_json({"jsonrpc": "2.0", "id": req_id, "result": {}})
+        elif method == "thread/start":
+            proc.feed_json({"jsonrpc": "2.0", "id": req_id, "result": {"thread": {"id": "t-srvreq", "source": "vscode"}}})
+        elif method == "turn/start":
+            proc.feed_json({"jsonrpc": "2.0", "id": req_id, "result": {"turn": {"id": "turn-1"}}})
+            # Server sends an interactive approval request mid-turn!
+            proc.feed_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 99,
+                    "method": "item/commandExecution/requestApproval",
+                    "params": {"command": "echo hi"},
+                }
+            )
+        elif req_id == 99 and "error" in msg:
+            proc.feed_json(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "item/completed",
+                    "params": {"item": {"id": "m1", "type": "agentMessage", "text": "Recovered cleanly"}},
+                }
+            )
+            proc.feed_json(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "turn/completed",
+                    "params": {"turn": {"id": "turn-1", "status": "completed", "error": None}},
+                }
+            )
+
+    async def fake_exec(*cmd: str, **kwargs: Any) -> _FakeAppServerProcess:
+        proc = _FakeAppServerProcess(responder)
+        captured.append(proc)
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    res = await adapter.run_session(prompt="test approval guard", cwd=str(tmp_path), sandbox="read-only")
+    assert res["status"] == "success"
+    assert res["summary"] == "Recovered cleanly"
+    err_reply = next(m for m in captured[0].stdin.messages if m.get("id") == 99)
+    assert err_reply["error"]["code"] == -32601
+
+
+@pytest.mark.asyncio
+async def test_codex_app_server_timeout_kills_process_tree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = CodexExecAdapter(CodexConfig(allowed_root=tmp_path, backend="app-server"))
+    monkeypatch.setattr(adapter, "find_executable", lambda: "/fake/codex")
+
+    hanging_proc: list[_FakeAppServerProcess] = []
+
+    def responder(msg: dict[str, Any], proc: _FakeAppServerProcess) -> None:
+        method = msg.get("method")
+        req_id = msg.get("id")
+        if method == "initialize":
+            proc.feed_json({"jsonrpc": "2.0", "id": req_id, "result": {}})
+        elif method == "thread/start":
+            proc.feed_json({"jsonrpc": "2.0", "id": req_id, "result": {"thread": {"id": "t-hang", "source": "vscode"}}})
+        elif method == "turn/start":
+            proc.feed_json({"jsonrpc": "2.0", "id": req_id, "result": {"turn": {"id": "turn-1"}}})
+            # Intentionally never emit turn/completed.
+
+    async def fake_exec(*cmd: str, **kwargs: Any) -> Any:
+        if cmd[0] == "taskkill":
+            return _FakeCodexProcess(returncode=0)
+        proc = _FakeAppServerProcess(responder)
+        hanging_proc.append(proc)
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    res = await adapter.run_session(
+        prompt="hang app server",
+        cwd=str(tmp_path),
+        timeout_sec=0.05,  # type: ignore[arg-type]
+    )
+    assert res["status"] == "timeout"
+    assert res["backend"] == "app-server"
+    assert hanging_proc[0].killed is True
+
+
+@pytest.mark.asyncio
+async def test_codex_list_threads_and_read_thread(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = CodexExecAdapter(CodexConfig(allowed_root=tmp_path, backend="app-server"))
+    monkeypatch.setattr(adapter, "find_executable", lambda: "/fake/codex")
+
+    def responder(msg: dict[str, Any], proc: _FakeAppServerProcess) -> None:
+        method = msg.get("method")
+        req_id = msg.get("id")
+        if method == "initialize":
+            proc.feed_json({"jsonrpc": "2.0", "id": req_id, "result": {}})
+        elif method == "thread/list":
+            proc.feed_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "data": [
+                            {
+                                "id": "t-1",
+                                "name": "Demo Thread",
+                                "preview": "Inspect repo",
+                                "cwd": str(tmp_path),
+                                "source": "vscode",
+                                "originator": "multi-agent-orchestrator",
+                                "model": "gpt-6-luna",
+                                "createdAt": 1000,
+                                "updatedAt": 2000,
+                                "path": "/rollout.jsonl",
+                            }
+                        ]
+                    },
+                }
+            )
+        elif method == "thread/read":
+            proc.feed_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "thread": {
+                            "id": "t-1",
+                            "preview": "Inspect repo",
+                            "cwd": str(tmp_path),
+                            "source": "vscode",
+                            "turns": [
+                                {
+                                    "id": "turn-1",
+                                    "status": "completed",
+                                    "items": [
+                                        {
+                                            "type": "userMessage",
+                                            "id": "u1",
+                                            "content": [{"type": "text", "text": "Inspect repo"}],
+                                        },
+                                        {
+                                            "type": "commandExecution",
+                                            "id": "c1",
+                                            "command": "git status",
+                                            "status": "completed",
+                                            "exitCode": 0,
+                                            "aggregatedOutput": "very long noise",
+                                        },
+                                        {
+                                            "type": "agentMessage",
+                                            "id": "a1",
+                                            "text": "Clean working tree.",
+                                        },
+                                    ],
+                                }
+                            ],
+                        }
+                    },
+                }
+            )
+
+    async def fake_exec(*cmd: str, **kwargs: Any) -> _FakeAppServerProcess:
+        return _FakeAppServerProcess(responder)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    listed = await adapter.list_threads(cwd=str(tmp_path), limit=10)
+    assert listed["status"] == "success"
+    assert listed["count"] == 1
+    assert listed["threads"][0]["thread_id"] == "t-1"
+    assert listed["threads"][0]["source"] == "vscode"
+
+    read = await adapter.read_thread(thread_id="t-1", max_turns=5)
+    assert read["status"] == "success"
+    assert read["total_turns"] == 1
+    assert read["returned_turns"] == 1
+    items = read["turns"][0]["items"]
+    assert [it["type"] for it in items] == ["userMessage", "commandExecution", "agentMessage"]
+    assert "aggregatedOutput" not in items[1]
+    assert items[2]["text"] == "Clean working tree."
+
+
+@pytest.mark.asyncio
 async def test_codex_timeout_kills_process_tree(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    adapter = CodexExecAdapter(CodexConfig(allowed_root=tmp_path))
+    adapter = CodexExecAdapter(CodexConfig(allowed_root=tmp_path, backend="exec"))
     monkeypatch.setattr(adapter, "find_executable", lambda: "/fake/codex")
 
     hanging = _FakeCodexProcess(hang=True)
@@ -229,6 +677,7 @@ async def test_codex_timeout_kills_process_tree(
         timeout_sec=0.05,  # type: ignore[arg-type]
     )
     assert res["status"] == "timeout"
+    assert res["backend"] == "exec"
     assert hanging.killed is True
 
 
@@ -244,10 +693,17 @@ async def test_create_codex_server_registers_tools_and_enforces_quota(tmp_path: 
     server = create_codex_server(cfg, adapter=adapter)
 
     tools = await server.list_tools()
-    assert {t.name for t in tools} == {"codex", "codex-reply", "codex_health_check"}
+    assert {t.name for t in tools} == {
+        "codex",
+        "codex-reply",
+        "codex_health_check",
+        "codex_list_threads",
+        "codex_read_thread",
+    }
 
     health = _extract_tool_dict(await server.call_tool("codex_health_check", {}))
     assert health["ready"] is True
+    assert health["backend"] == "app-server"
     assert health["default_model"] == "gpt-6-luna"
     assert health["allowed_models"] == ["gpt-6-luna", "gpt-5.6-luna"]
     assert health["allow_escalation"] is False

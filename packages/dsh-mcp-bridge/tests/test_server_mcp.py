@@ -102,7 +102,13 @@ async def test_server_registers_all_tools_and_health_hides_secret(tmp_path: Path
     )
 
     tools = await server.list_tools()
-    assert {t.name for t in tools} == {"dsh_health_check", "dsh_run_task", "dsh_resume_or_fork"}
+    assert {t.name for t in tools} == {
+        "dsh_health_check",
+        "dsh_run_task",
+        "dsh_resume_or_fork",
+        "dsh_list_sessions",
+        "dsh_read_session",
+    }
 
     raw_health = await server.call_tool("dsh_health_check", {})
     health = _extract_tool_dict(raw_health)

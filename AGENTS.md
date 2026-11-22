@@ -24,7 +24,7 @@
 
 ### 层级 1：日常工程主力 —— `codex-worker`（硬锁 `gpt-6-luna` / `gpt-5.6-luna`）
 * **适用场景**：常规单/多文件功能开发、UI 调整、常规 Bug 修复、单元测试补全、接口编写。
-* **硬约束**：`codex-worker` 通过 `codex-mcp-bridge`（底层调用新版 Codex `0.171.0+` 的 `codex exec --json`）在代码层面强制白名单锁定 `gpt-6-luna` / `gpt-5.6-luna`（默认 `CODEX_ALLOW_ESCALATION=false`）；涉及较大代码修改时可启用 `worktree=true` 在独立 Git Worktree 中执行。
+* **硬约束**：`codex-worker` 通过 `codex-mcp-bridge`（默认采用新版 Codex `0.171.0+` 原生 `codex app-server --listen stdio://` 协议，自动创建可直接在 Codex Desktop App 中展示与接管的 `source="vscode"` 持久化会话；仅当传入 `worktree=true` 或配置 `CODEX_BACKEND=exec` 时回退 `codex exec --json`）在代码层面强制白名单锁定 `gpt-6-luna` / `gpt-5.6-luna`（默认 `CODEX_ALLOW_ESCALATION=false`）。
 
 ### 层级 2：重体力活与方案预研 —— `deepseek-harness`（`dsh-mcp-bridge`）
 * **适用场景**：
@@ -47,18 +47,22 @@
 
 ## 2.5 已验证 MCP 工具契约（实机校验）
 
-### `codex-worker`（`codex-mcp-bridge` 封装 Codex `0.171.0+ exec --json`）
-* **`codex_health_check`**：探测新版 Codex CLI 可执行文件、当前默认模型（`gpt-6-luna`）、允许列表及 `CODEX_ALLOW_ESCALATION` 状态。
-* **`codex`**：发起新的 Codex 会话
+### `codex-worker`（`codex-mcp-bridge` 默认 `app-server`，支持原生 Desktop 会话）
+* **`codex_health_check`**：探测新版 Codex CLI 可执行文件、当前后端（`app-server` / `exec`）、默认模型（`gpt-6-luna`）、允许列表及 `CODEX_ALLOW_ESCALATION` 状态。
+* **`codex`**：发起新的 Codex 持久化会话（写入 `source="vscode"`，在 Codex Desktop App 对应项目边栏可见）
   * 必填参数：`prompt`、`cwd`（必须在 `CODEX_ALLOWED_ROOT` 白名单目录内）
-  * 安全与配额硬约束：`sandbox` 仅允许 `"read-only"` 或 `"workspace-write"`（代码层面已拦截 `danger-full-access`）；`model` 默认留空（使用 `gpt-6-luna`），且仅允许白名单内的 Luna 模型（`gpt-6-luna`、`gpt-5.6-luna`）；需要隔离分支开发时可传 `worktree=true`。
-* **`codex-reply`**：在同一 Codex 会话中继续对话
+  * 安全与配额硬约束：`sandbox` 仅允许 `"read-only"` 或 `"workspace-write"`（代码层面已拦截 `danger-full-access`）；`model` 默认留空（使用 `gpt-6-luna`），且仅允许白名单内的 Luna 模型（`gpt-6-luna`、`gpt-5.6-luna`）；需要隔离分支开发时可传 `worktree=true`（自动走 `exec --worktree`）。
+* **`codex-reply`**：在同一 Codex 会话中继续对话（支持可选 `sandbox` 覆写）
   * 必填参数：`thread_id`、`prompt`、`cwd`。
+* **`codex_list_threads`** / **`codex_read_thread`**：只读检索/读取 Codex Desktop 与 CLI 的持久化会话列表及完整多轮对话历史。
 
 ### `deepseek-harness`（`dsh-mcp-bridge`）
 * **`dsh_health_check`**：探测本地 `dsh` CLI、`codex` CLI、`127.0.0.1:3080` 及备用 API Key 状态。
 * **`dsh_run_task`**：下发批处理、调研或长循环任务（默认 `model_tier="flash"`；复杂根因分析或方案推演传 `model_tier="reasoner"`；大产物配合 `output_file` 写入 `.agent-handoff/<task_id>/`）。
 * **`dsh_resume_or_fork`**：基于历史 `trajectory_id` 执行 `resume`（原生会话续接）或 `fork`（派生新分支重跑）。
+* **`dsh_list_sessions`** / **`dsh_read_session`**：只读检索与读取 `~/.dsh` 原生会话历史（优先解压 `.v4.jsonl.zstd`，缺失时自动降级 `projcache` 摘要）。
+
+> **长工程多轮协作规范**：同一项目的连续任务优先复用既有原生 `thread_id`（`codex-reply`）或 `trajectory_id`（`dsh_resume_or_fork`），必要时先通过 `codex_read_thread` / `dsh_read_session` 读取前序终端会话上下文，避免不断新建孤立一次性会话。
 
 ---
 
