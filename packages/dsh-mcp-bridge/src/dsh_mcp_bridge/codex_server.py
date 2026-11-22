@@ -7,6 +7,7 @@ from typing import Any, Literal
 from mcp.server.mcpserver import MCPServer
 
 from dsh_mcp_bridge.codex_bridge import CodexConfig, CodexExecAdapter
+from dsh_mcp_bridge.jobs import AsyncJobManager, JobRecord, clamp_sync_wait
 
 
 def create_codex_server(
@@ -17,6 +18,7 @@ def create_codex_server(
     """Create and configure the MCPServer instance for codex-worker."""
     cfg = config or CodexConfig.from_env()
     exec_adapter = adapter or CodexExecAdapter(cfg)
+    job_manager = AsyncJobManager()
     mcp = MCPServer("codex-worker")
 
     @mcp.tool()
@@ -32,6 +34,7 @@ def create_codex_server(
             "allow_escalation": cfg.allow_escalation,
             "allowed_root": str(cfg.allowed_root),
             "ignore_user_config": cfg.ignore_user_config,
+            "max_sync_wait_sec": cfg.max_sync_wait_sec,
         }
 
     @mcp.tool()
@@ -42,15 +45,28 @@ def create_codex_server(
         model: str | None = None,
         worktree: bool = False,
         timeout_sec: int | None = None,
+        wait_sec: int | None = None,
     ) -> dict[str, Any]:
         """Run a Codex session inside allowed_root with enforced Luna model allowlist."""
-        return await exec_adapter.run_session(
-            prompt=prompt,
-            cwd=cwd,
-            sandbox=sandbox,
-            model=model,
-            worktree=worktree,
-            timeout_sec=timeout_sec,
+        effective_wait = clamp_sync_wait(wait_sec, cfg.max_sync_wait_sec)
+
+        async def _run(record: JobRecord) -> dict[str, Any]:
+            return await exec_adapter.run_session(
+                prompt=prompt,
+                cwd=cwd,
+                sandbox=sandbox,
+                model=model,
+                worktree=worktree,
+                timeout_sec=timeout_sec,
+                on_thread_id=lambda tid: record.metadata.__setitem__("thread_id", tid),
+            )
+
+        return await job_manager.start_and_wait(
+            tool_name="codex",
+            poll_tool_name="codex_job_status",
+            coro_factory=_run,
+            metadata={"cwd": cwd, "model": model or cfg.default_model},
+            wait_sec=effective_wait,
         )
 
     @mcp.tool(name="codex-reply")
@@ -61,15 +77,43 @@ def create_codex_server(
         model: str | None = None,
         sandbox: Literal["read-only", "workspace-write"] | None = None,
         timeout_sec: int | None = None,
+        wait_sec: int | None = None,
     ) -> dict[str, Any]:
         """Continue an existing Codex thread by thread_id inside allowed_root."""
-        return await exec_adapter.reply_session(
-            thread_id=thread_id,
-            prompt=prompt,
-            cwd=cwd,
-            model=model,
-            sandbox=sandbox,
-            timeout_sec=timeout_sec,
+        effective_wait = clamp_sync_wait(wait_sec, cfg.max_sync_wait_sec)
+
+        async def _run(record: JobRecord) -> dict[str, Any]:
+            return await exec_adapter.reply_session(
+                thread_id=thread_id,
+                prompt=prompt,
+                cwd=cwd,
+                model=model,
+                sandbox=sandbox,
+                timeout_sec=timeout_sec,
+                on_thread_id=lambda tid: record.metadata.__setitem__("thread_id", tid),
+            )
+
+        return await job_manager.start_and_wait(
+            tool_name="codex-reply",
+            poll_tool_name="codex_job_status",
+            coro_factory=_run,
+            metadata={"cwd": cwd, "thread_id": thread_id, "model": model or cfg.default_model},
+            wait_sec=effective_wait,
+        )
+
+    @mcp.tool()
+    async def codex_job_status(
+        job_id: str | None = None,
+        wait_sec: int = 120,
+        cancel: bool = False,
+    ) -> dict[str, Any]:
+        """List background Codex jobs, long-poll a running job_id, or cancel it cleanly."""
+        effective_wait = clamp_sync_wait(wait_sec, cfg.max_sync_wait_sec)
+        return await job_manager.poll(
+            job_id=job_id,
+            wait_sec=effective_wait,
+            cancel=cancel,
+            poll_tool_name="codex_job_status",
         )
 
     @mcp.tool()

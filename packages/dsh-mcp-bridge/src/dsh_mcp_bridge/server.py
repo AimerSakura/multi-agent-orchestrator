@@ -20,6 +20,7 @@ from dsh_mcp_bridge.adapters.dsh_cli import wrap_command_for_platform
 from dsh_mcp_bridge.codex_bridge import discover_codex_executable
 from dsh_mcp_bridge.config import BridgeConfig, VALID_MODEL_TIERS
 from dsh_mcp_bridge.dsh_sessions import list_dsh_sessions, read_dsh_session, resolve_dsh_home
+from dsh_mcp_bridge.jobs import AsyncJobManager, JobRecord, clamp_sync_wait
 from dsh_mcp_bridge.logger import TrajectoryRecord, TrajectoryStore, get_logger
 from dsh_mcp_bridge.security import (
     PathSecurityError,
@@ -85,6 +86,7 @@ def create_server(
     http = http_adapter or DshHttpAdapter(cfg)
     api = api_adapter or DeepSeekApiFallbackAdapter(cfg)
     trajectory_store = store or TrajectoryStore(cfg.allowed_root)
+    job_manager = AsyncJobManager()
 
     mcp = MCPServer("dsh-mcp-bridge")
 
@@ -108,6 +110,7 @@ def create_server(
             "api_fallback": api_status,
             "allowed_root": str(cfg.allowed_root),
             "dsh_home": cfg.dsh_home,
+            "max_sync_wait_sec": cfg.max_sync_wait_sec,
         }
 
     @mcp.tool()
@@ -117,6 +120,7 @@ def create_server(
         output_file: str | None = None,
         model_tier: Literal["flash", "reasoner", "default"] = "flash",
         timeout_sec: int | None = None,
+        wait_sec: int | None = None,
     ) -> dict[str, Any]:
         """Execute a task via DeepSeek Harness (`dsh`) inside the allowed workspace."""
         if not task_prompt or not task_prompt.strip():
@@ -157,10 +161,10 @@ def create_server(
         )
 
         if cli.find_executable():
-            result = await cli.run_task(request)
+            runner = cli.run_task
         elif api.is_configured():
             _LOGGER.info("dsh CLI unavailable; routing task through DeepSeek API fallback.")
-            result = await api.run_task(request)
+            runner = api.run_task
         else:
             return TaskResult(
                 status="failed",
@@ -173,8 +177,22 @@ def create_server(
                 adapter="dsh-cli",
             ).to_dict()
 
-        _record_result(trajectory_store, result, validated_workspace, model_tier)
-        return result.to_dict()
+        effective_wait = clamp_sync_wait(wait_sec, cfg.max_sync_wait_sec)
+
+        async def _run(record: JobRecord) -> dict[str, Any]:
+            result = await runner(request)
+            if result.trajectory_id:
+                record.metadata["trajectory_id"] = result.trajectory_id
+            _record_result(trajectory_store, result, validated_workspace, model_tier)
+            return result.to_dict()
+
+        return await job_manager.start_and_wait(
+            tool_name="dsh_run_task",
+            poll_tool_name="dsh_job_status",
+            coro_factory=_run,
+            metadata={"workspace_dir": str(validated_workspace), "model_tier": model_tier},
+            wait_sec=effective_wait,
+        )
 
     @mcp.tool()
     async def dsh_resume_or_fork(
@@ -184,6 +202,7 @@ def create_server(
         workspace_dir: str | None = None,
         model_tier: Literal["flash", "reasoner", "default"] = "default",
         timeout_sec: int | None = None,
+        wait_sec: int | None = None,
     ) -> dict[str, Any]:
         """Resume an existing dsh session or fork a new branch seeded from prior context."""
         clean_id = trajectory_id.strip()
@@ -263,9 +282,42 @@ def create_server(
             timeout_sec=cfg.resolve_timeout(timeout_sec),
             parent_record=parent_record,
         )
-        result = await cli.resume_or_fork(request)
-        _record_result(trajectory_store, result, validated_workspace, model_tier)
-        return result.to_dict()
+        effective_wait = clamp_sync_wait(wait_sec, cfg.max_sync_wait_sec)
+
+        async def _run(record: JobRecord) -> dict[str, Any]:
+            result = await cli.resume_or_fork(request)
+            if result.trajectory_id:
+                record.metadata["trajectory_id"] = result.trajectory_id
+            _record_result(trajectory_store, result, validated_workspace, model_tier)
+            return result.to_dict()
+
+        return await job_manager.start_and_wait(
+            tool_name="dsh_resume_or_fork",
+            poll_tool_name="dsh_job_status",
+            coro_factory=_run,
+            metadata={
+                "workspace_dir": str(validated_workspace),
+                "trajectory_id": clean_id,
+                "mode": mode,
+                "model_tier": model_tier,
+            },
+            wait_sec=effective_wait,
+        )
+
+    @mcp.tool()
+    async def dsh_job_status(
+        job_id: str | None = None,
+        wait_sec: int = 120,
+        cancel: bool = False,
+    ) -> dict[str, Any]:
+        """List background DSH jobs, long-poll a running job_id, or cancel it cleanly."""
+        effective_wait = clamp_sync_wait(wait_sec, cfg.max_sync_wait_sec)
+        return await job_manager.poll(
+            job_id=job_id,
+            wait_sec=effective_wait,
+            cancel=cancel,
+            poll_tool_name="dsh_job_status",
+        )
 
     @mcp.tool()
     async def dsh_list_sessions(

@@ -200,3 +200,36 @@ def test_read_dsh_session_rejects_path_traversal(tmp_path: Path) -> None:
         res = read_dsh_session(tmp_path, session_id=bad_id)
         assert res["status"] == "failed"
         assert "Invalid session_id" in res["summary"]
+
+
+def test_find_zstd_executable_fallback_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_zstd = tmp_path / "zstd.exe"
+    fake_zstd.write_text("bin", encoding="utf-8")
+
+    monkeypatch.setenv("DSH_ZSTD_BIN", str(fake_zstd))
+    monkeypatch.setattr(dsh_sessions.shutil, "which", lambda _name: None)
+    assert dsh_sessions._find_zstd_executable() == str(fake_zstd)
+
+    monkeypatch.delenv("DSH_ZSTD_BIN", raising=False)
+    conda_zstd = tmp_path / "anaconda3" / "Library" / "bin" / "zstd.exe"
+    conda_zstd.parent.mkdir(parents=True, exist_ok=True)
+    conda_zstd.write_text("bin", encoding="utf-8")
+
+    orig_path_cls = dsh_sessions.Path
+
+    class _PatchedPath(type(Path())):
+        @classmethod
+        def home(cls) -> Path:
+            return tmp_path
+
+    monkeypatch.setattr(dsh_sessions.os, "name", "nt")
+    monkeypatch.setattr(dsh_sessions, "Path", _PatchedPath)
+    monkeypatch.setattr(
+        _PatchedPath,
+        "is_file",
+        lambda self: str(self) == str(conda_zstd) and orig_path_cls(self).is_file(),
+    )
+    assert dsh_sessions._find_zstd_executable() == str(conda_zstd)

@@ -102,9 +102,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\render-mcp-config.
 
 | Tool 名称 | 说明 | 核心参数 |
 | --- | --- | --- |
-| `dsh_health_check` | 探测 `dsh` CLI、`codex` CLI、`127.0.0.1:3080` 端口及备用 API Key 状态 | 无 |
-| `dsh_run_task` | 通过 `dsh --profile headless --json` 执行任务并追踪产物与 `trajectory_id` | `task_prompt`, `workspace_dir`, `output_file?`, `model_tier?`, `timeout_sec?` |
-| `dsh_resume_or_fork` | 从历史 `trajectory_id` 恢复会话（`resume`）或分叉出新分支继续（`fork`） | `trajectory_id`, `mode?`, `new_instruction?`, `workspace_dir?`, `model_tier?`, `timeout_sec?` |
+| `dsh_health_check` | 探测 `dsh` CLI、`codex` CLI、`127.0.0.1:3080` 端口、`max_sync_wait_sec` 及备用 API Key 状态 | 无 |
+| `dsh_run_task` | 通过 `dsh --profile headless --json` 执行任务；超时 `wait_sec`（默认 120s）转后台返回 `job_id` | `task_prompt`, `workspace_dir`, `output_file?`, `model_tier?`, `timeout_sec?`, `wait_sec?` |
+| `dsh_resume_or_fork` | 从历史 `trajectory_id` 恢复（`resume`）或分叉继续（`fork`），支持 `wait_sec` 异步分离 | `trajectory_id`, `mode?`, `new_instruction?`, `workspace_dir?`, `model_tier?`, `timeout_sec?`, `wait_sec?` |
+| `dsh_job_status` | 查询/长轮询后台 DSH `job_id` 状态，或传 `cancel=true` 终止任务与进程树 | `job_id?`, `wait_sec?`, `cancel?` |
 | `dsh_list_sessions` | 只读检索 `~/.dsh` 原生会话列表（来自 `session_projcache`） | `workspace_dir?`, `limit?`, `search_term?` |
 | `dsh_read_session` | 只读读取指定 `dsh` 会话多轮历史（优先解压 `.v4.jsonl.zstd`，自动降级摘要） | `session_id`, `max_turns?`, `max_chars_per_message?` |
 
@@ -112,9 +113,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\render-mcp-config.
 
 | Tool 名称 | 说明 | 核心参数 |
 | --- | --- | --- |
-| `codex_health_check` | 探测 Codex CLI、后端协议（默认 `app-server`）、默认模型及配额白名单 | 无 |
-| `codex` | 发起 Codex 持久化会话（默认生成 Desktop 可见的 `source="vscode"` 会话；传 `worktree=true` 走 `exec --worktree`） | `prompt`, `cwd`, `sandbox?`, `model?`, `worktree?`, `timeout_sec?` |
-| `codex-reply` | 沿用已有 `thread_id` 继续对话 | `thread_id`, `prompt`, `cwd`, `model?`, `sandbox?`, `timeout_sec?` |
+| `codex_health_check` | 探测 Codex CLI、后端协议（默认 `app-server`）、默认模型、`max_sync_wait_sec` 及配额白名单 | 无 |
+| `codex` | 发起 Codex 持久化会话（默认生成 Desktop 可见的 `source="vscode"` 会话；支持 `wait_sec` 避免 3 分钟超时） | `prompt`, `cwd`, `sandbox?`, `model?`, `worktree?`, `timeout_sec?`, `wait_sec?` |
+| `codex-reply` | 沿用已有 `thread_id` 继续对话，支持 `wait_sec` | `thread_id`, `prompt`, `cwd`, `model?`, `sandbox?`, `timeout_sec?`, `wait_sec?` |
+| `codex_job_status` | 查询/长轮询后台 Codex `job_id`（实时附带 `thread_id`），或 `cancel=true` 终止任务 | `job_id?`, `wait_sec?`, `cancel?` |
 | `codex_list_threads` | 只读检索 Codex Desktop/CLI 持久化会话列表 | `cwd?`, `limit?`, `include_exec?`, `search_term?` |
 | `codex_read_thread` | 只读读取指定 Codex 会话的历史轮次与消息摘要 | `thread_id`, `max_turns?`, `max_chars_per_message?` |
 
@@ -127,6 +129,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\render-mcp-config.
 | `DSH_BASE_URL` | `http://127.0.0.1:3080` | `dsh web` 本地探测地址 |
 | `DSH_HOME` | 未设置（使用 `dsh` 默认目录） | 可选覆盖 `DSH_HOME`（受限目录写权限时建议指定） |
 | `DSH_DEFAULT_TIMEOUT` | `300` | 单任务默认超时时间（秒） |
+| `DSH_MAX_SYNC_WAIT_SEC` | `120` | 每次 MCP 工具调用前最多同步等待秒数（硬上限 `150`） |
+| `CODEX_MAX_SYNC_WAIT_SEC` | `120` | `codex` / `codex-reply` 单次调用最多同步等待秒数（硬上限 `150`） |
+| `DSH_ZSTD_BIN` | 自动探测 | 可选指定 `zstd.exe` 路径（未设置时自动回退检测 `PATH` 与标准 Conda 安装路径） |
 | `DSH_APPROVAL_POLICY` | `never` | Headless 执行时的审批策略（`never` / `ask`） |
 | `DSH_MODEL_FLASH` | `deepseek-flash` | `model_tier="flash"` 映射的模型 ID |
 | `DSH_MODEL_REASONER` | `deepseek-v4-pro` | `model_tier="reasoner"` 映射的模型 ID |

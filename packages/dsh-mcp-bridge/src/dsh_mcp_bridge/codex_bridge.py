@@ -98,6 +98,7 @@ class CodexConfig:
     allowed_models: tuple[str, ...] = DEFAULT_ALLOWED_CODEX_MODELS
     allow_escalation: bool = False
     default_timeout: int = 300
+    max_sync_wait_sec: int = 120
     max_log_chars: int = 4000
     ignore_user_config: bool = True
     approval_policy: str = "never"
@@ -142,6 +143,7 @@ class CodexConfig:
             allowed_models=tuple(dict.fromkeys(parsed_models)),
             allow_escalation=parse_bool(env.get("CODEX_ALLOW_ESCALATION"), default=False),
             default_timeout=parse_int(env.get("CODEX_DEFAULT_TIMEOUT"), 300, 1, 3600),
+            max_sync_wait_sec=parse_int(env.get("CODEX_MAX_SYNC_WAIT_SEC"), 120, 0, 150),
             max_log_chars=parse_int(env.get("CODEX_MAX_LOG_CHARS"), 4000, 256, 100_000),
             ignore_user_config=parse_bool(env.get("CODEX_IGNORE_USER_CONFIG"), default=True),
             approval_policy=approval_policy,
@@ -424,6 +426,7 @@ class CodexExecAdapter:
         model: str | None = None,
         worktree: bool = False,
         timeout_sec: int | None = None,
+        on_thread_id: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         """Run a fresh Codex session inside validated cwd with enforced sandbox & model allowlist."""
         if not prompt or not prompt.strip():
@@ -459,6 +462,7 @@ class CodexExecAdapter:
                 resolved_model=resolved_model,
                 sandbox=sandbox,
                 timeout_sec=effective_timeout,
+                on_thread_id=on_thread_id,
             )
 
         cmd = [
@@ -497,6 +501,7 @@ class CodexExecAdapter:
         model: str | None = None,
         sandbox: str | None = None,
         timeout_sec: int | None = None,
+        on_thread_id: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         """Resume an existing Codex thread by thread_id via `app-server` or `exec resume`."""
         clean_thread = thread_id.strip()
@@ -543,6 +548,7 @@ class CodexExecAdapter:
                 sandbox=sandbox,
                 timeout_sec=effective_timeout,
                 thread_id=clean_thread,
+                on_thread_id=on_thread_id,
             )
 
         cmd = [
@@ -866,6 +872,7 @@ class CodexExecAdapter:
         sandbox: str | None,
         timeout_sec: int,
         thread_id: str = "",
+        on_thread_id: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         before_snapshot = snapshot_workspace(cwd)
         proc: asyncio.subprocess.Process | None = None
@@ -944,6 +951,8 @@ class CodexExecAdapter:
             if isinstance(thread_obj, Mapping):
                 effective_thread_id = str(thread_obj.get("id") or effective_thread_id)
                 thread_source = thread_obj.get("source")
+            if on_thread_id is not None and effective_thread_id:
+                on_thread_id(effective_thread_id)
 
             turn_params: dict[str, Any] = {
                 "threadId": effective_thread_id,
@@ -1004,6 +1013,11 @@ class CodexExecAdapter:
                 "backend": "app-server",
                 "source": thread_source,
             }
+        except asyncio.CancelledError:
+            if proc is not None:
+                await kill_process_tree(proc)
+                proc = None
+            raise
         except Exception as exc:
             flow_issue = {"rpc_error": str(exc)}
         finally:
@@ -1103,6 +1117,9 @@ class CodexExecAdapter:
                 "exit_code": proc.returncode,
                 "backend": "exec",
             }
+        except asyncio.CancelledError:
+            await kill_process_tree(proc)
+            raise
 
         stdout_text = stdout_b.decode("utf-8", errors="replace")
         stderr_text = stderr_b.decode("utf-8", errors="replace")

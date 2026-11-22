@@ -46,6 +46,7 @@ class BridgeConfig:
     dsh_base_url: str = "http://127.0.0.1:3080"
     allowed_root: Path = Path(".")
     default_timeout: int = 300
+    max_sync_wait_sec: int = 120
     max_log_chars: int = 4000
     dsh_home: str | None = None
     approval_policy: str = "never"
@@ -77,6 +78,7 @@ class BridgeConfig:
             dsh_base_url=(env.get("DSH_BASE_URL", "http://127.0.0.1:3080").strip() or "http://127.0.0.1:3080").rstrip("/"),
             allowed_root=allowed_root,
             default_timeout=parse_int(env.get("DSH_DEFAULT_TIMEOUT"), 300, 1, 3600),
+            max_sync_wait_sec=parse_int(env.get("DSH_MAX_SYNC_WAIT_SEC"), 120, 0, 150),
             max_log_chars=parse_int(env.get("DSH_MAX_LOG_CHARS"), 4000, 256, 100_000),
             dsh_home=dsh_home,
             approval_policy=approval_policy,

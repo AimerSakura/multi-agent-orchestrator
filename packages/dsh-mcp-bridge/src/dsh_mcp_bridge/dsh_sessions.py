@@ -142,6 +142,35 @@ def list_dsh_sessions(
     }
 
 
+def _find_zstd_executable() -> str | None:
+    """Locate `zstd` CLI from DSH_ZSTD_BIN, PATH, or standard Windows Anaconda/Miniconda paths."""
+    configured = os.environ.get("DSH_ZSTD_BIN", "").strip()
+    if configured:
+        candidate = Path(configured).expanduser()
+        if candidate.is_file():
+            return str(candidate)
+        from_path = shutil.which(configured)
+        if from_path:
+            return from_path
+
+    from_path = shutil.which("zstd")
+    if from_path:
+        return from_path
+
+    if os.name == "nt":
+        candidates = (
+            Path(r"C:\ProgramData\anaconda3\Library\bin\zstd.exe"),
+            Path(r"C:\ProgramData\miniconda3\Library\bin\zstd.exe"),
+            Path.home() / "anaconda3" / "Library" / "bin" / "zstd.exe",
+            Path.home() / "miniconda3" / "Library" / "bin" / "zstd.exe",
+        )
+        for path in candidates:
+            if path.is_file():
+                return str(path)
+
+    return None
+
+
 def _decompress_zstd_file(path: Path) -> str | None:
     """Decompress a `.zstd` file using optional `zstandard` package or local `zstd` CLI."""
     try:
@@ -157,7 +186,7 @@ def _decompress_zstd_file(path: Path) -> str | None:
     except Exception:
         return None
 
-    zstd_bin = shutil.which("zstd")
+    zstd_bin = _find_zstd_executable()
     if not zstd_bin:
         return None
 

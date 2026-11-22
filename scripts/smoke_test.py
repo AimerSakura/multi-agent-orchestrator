@@ -54,11 +54,18 @@ async def verify_dsh_bridge(repo_root: Path) -> dict[str, Any]:
                 "dsh_health_check",
                 "dsh_run_task",
                 "dsh_resume_or_fork",
+                "dsh_job_status",
                 "dsh_list_sessions",
                 "dsh_read_session",
             }
             missing = expected - tool_names
             assert not missing, f"Missing expected dsh-mcp-bridge tools: {sorted(missing)}"
+
+            jobs_res = await asyncio.wait_for(session.call_tool("dsh_job_status", {}), timeout=15.0)
+            jobs_payload = _extract_payload(jobs_res)
+            assert jobs_payload.get("status") == "success" and isinstance(jobs_payload.get("jobs"), list), (
+                f"Unexpected dsh_job_status payload: {jobs_payload}"
+            )
 
             health_res = await asyncio.wait_for(session.call_tool("dsh_health_check", {}), timeout=15.0)
             health_payload = _extract_payload(health_res)
@@ -107,11 +114,18 @@ async def verify_codex_worker(repo_root: Path) -> dict[str, Any]:
                 "codex",
                 "codex-reply",
                 "codex_health_check",
+                "codex_job_status",
                 "codex_list_threads",
                 "codex_read_thread",
             }
             missing = expected_tools - tool_names
             assert not missing, f"Missing expected codex-mcp-bridge tools: {sorted(missing)}"
+
+            codex_jobs_res = await asyncio.wait_for(session.call_tool("codex_job_status", {}), timeout=15.0)
+            codex_jobs_payload = _extract_payload(codex_jobs_res)
+            assert codex_jobs_payload.get("status") == "success" and isinstance(
+                codex_jobs_payload.get("jobs"), list
+            ), f"Unexpected codex_job_status payload: {codex_jobs_payload}"
 
             health_res = await asyncio.wait_for(session.call_tool("codex_health_check", {}), timeout=15.0)
             health_payload = _extract_payload(health_res)
@@ -166,7 +180,7 @@ async def run_smoke_test(*, skip_codex: bool = False) -> None:
     print("MCP smoke test [dsh-mcp-bridge] PASSED:")
     print(
         "  Tools verified : "
-        "['dsh_health_check', 'dsh_list_sessions', 'dsh_read_session', 'dsh_resume_or_fork', 'dsh_run_task']"
+        "['dsh_health_check', 'dsh_job_status', 'dsh_list_sessions', 'dsh_read_session', 'dsh_resume_or_fork', 'dsh_run_task']"
     )
     print(f"  dsh_cli avail  : {health_payload['dsh_cli'].get('available')}")
     print(f"  dsh_http reach : {health_payload['dsh_http'].get('reachable')}")

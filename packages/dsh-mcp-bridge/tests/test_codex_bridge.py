@@ -697,6 +697,7 @@ async def test_create_codex_server_registers_tools_and_enforces_quota(tmp_path: 
         "codex",
         "codex-reply",
         "codex_health_check",
+        "codex_job_status",
         "codex_list_threads",
         "codex_read_thread",
     }
@@ -704,6 +705,7 @@ async def test_create_codex_server_registers_tools_and_enforces_quota(tmp_path: 
     health = _extract_tool_dict(await server.call_tool("codex_health_check", {}))
     assert health["ready"] is True
     assert health["backend"] == "app-server"
+    assert health["max_sync_wait_sec"] == 120
     assert health["default_model"] == "gpt-6-luna"
     assert health["allowed_models"] == ["gpt-6-luna", "gpt-5.6-luna"]
     assert health["allow_escalation"] is False
@@ -720,3 +722,78 @@ async def test_create_codex_server_registers_tools_and_enforces_quota(tmp_path: 
     )
     assert blocked["status"] == "failed"
     assert "blocked by quota policy" in blocked["summary"]
+
+
+@pytest.mark.asyncio
+async def test_codex_server_async_detach_poll_and_cancel(tmp_path: Path) -> None:
+    cfg = CodexConfig(allowed_root=tmp_path)
+    adapter = CodexExecAdapter(cfg)
+    gate = asyncio.Event()
+    cancel_gate = asyncio.Event()
+    cancelled_inside = asyncio.Event()
+
+    async def fake_run_session(**kwargs: Any) -> dict[str, Any]:
+        cb = kwargs.get("on_thread_id")
+        if cb is not None:
+            cb("thread-live-999")
+        prompt = kwargs["prompt"]
+        if prompt == "hang forever":
+            try:
+                await cancel_gate.wait()
+            except asyncio.CancelledError:
+                cancelled_inside.set()
+                raise
+        await gate.wait()
+        return {
+            "status": "success",
+            "thread_id": "thread-live-999",
+            "model": "gpt-6-luna",
+            "summary": "Async complete",
+            "artifacts": [],
+            "usage": None,
+            "logs_tail": "",
+            "exit_code": 0,
+            "backend": "app-server",
+            "source": "vscode",
+        }
+
+    adapter.run_session = fake_run_session  # type: ignore[method-assign]
+    server = create_codex_server(cfg, adapter=adapter)
+
+    running = _extract_tool_dict(
+        await server.call_tool(
+            "codex",
+            {"prompt": "slow step", "cwd": str(tmp_path), "wait_sec": 0},
+        )
+    )
+    assert running["status"] == "running"
+    assert running["thread_id"] == "thread-live-999"
+    job_id = running["job_id"]
+
+    gate.set()
+    completed = _extract_tool_dict(
+        await server.call_tool(
+            "codex_job_status",
+            {"job_id": job_id, "wait_sec": 2},
+        )
+    )
+    assert completed["status"] == "success"
+    assert completed["thread_id"] == "thread-live-999"
+    assert completed["summary"] == "Async complete"
+
+    hang_res = _extract_tool_dict(
+        await server.call_tool(
+            "codex",
+            {"prompt": "hang forever", "cwd": str(tmp_path), "wait_sec": 0},
+        )
+    )
+    assert hang_res["status"] == "running"
+
+    cancel_res = _extract_tool_dict(
+        await server.call_tool(
+            "codex_job_status",
+            {"job_id": hang_res["job_id"], "cancel": True},
+        )
+    )
+    assert cancel_res["status"] == "cancelled"
+    assert cancelled_inside.is_set()

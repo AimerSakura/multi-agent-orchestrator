@@ -391,6 +391,9 @@ class DshCliAdapter:
                     exit_code=proc.returncode,
                     parent_trajectory_id=parent_trajectory_id,
                 )
+            except asyncio.CancelledError:
+                await kill_process_tree(proc)
+                raise
 
             stdout_text = stdout_b.decode("utf-8", errors="replace")
             stderr_text = stderr_b.decode("utf-8", errors="replace")

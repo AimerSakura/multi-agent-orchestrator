@@ -106,6 +106,7 @@ async def test_server_registers_all_tools_and_health_hides_secret(tmp_path: Path
         "dsh_health_check",
         "dsh_run_task",
         "dsh_resume_or_fork",
+        "dsh_job_status",
         "dsh_list_sessions",
         "dsh_read_session",
     }
@@ -113,6 +114,7 @@ async def test_server_registers_all_tools_and_health_hides_secret(tmp_path: Path
     raw_health = await server.call_tool("dsh_health_check", {})
     health = _extract_tool_dict(raw_health)
     assert health["ready"] is True
+    assert health["max_sync_wait_sec"] == 120
     assert health["dsh_cli"]["available"] is True
     assert health["dsh_http"]["reachable"] is True
     assert "codex_cli" in health
@@ -251,3 +253,51 @@ async def test_server_resume_or_fork_uses_trajectory_store_workspace(tmp_path: P
     assert forked["trajectory_id"] == "traj-002-fork"
     assert forked["parent_trajectory_id"] == "sess-stored"
     assert store.get("traj-002-fork") is not None
+
+
+@pytest.mark.asyncio
+async def test_server_async_detach_records_trajectory_upon_poll(tmp_path: Path) -> None:
+    import asyncio
+
+    cfg = BridgeConfig(allowed_root=tmp_path)
+    cli = _MockCliAdapter(cfg, available=True)
+    gate = asyncio.Event()
+
+    async def slow_run_task(request: RunTaskRequest) -> TaskResult:
+        cli.last_run = request
+        await gate.wait()
+        return TaskResult(
+            status="success",
+            trajectory_id="traj-async-01",
+            summary="Detached dsh run done",
+            artifacts=[],
+            logs_tail="ok",
+            adapter="dsh-cli",
+            exit_code=0,
+        )
+
+    cli.run_task = slow_run_task  # type: ignore[method-assign]
+    store = TrajectoryStore(allowed_root=tmp_path)
+    server = create_server(cfg, cli_adapter=cli, store=store)
+
+    detached = _extract_tool_dict(
+        await server.call_tool(
+            "dsh_run_task",
+            {"task_prompt": "long task", "workspace_dir": str(tmp_path), "wait_sec": 0},
+        )
+    )
+    assert detached["status"] == "running"
+    job_id = detached["job_id"]
+
+    gate.set()
+    finished = _extract_tool_dict(
+        await server.call_tool(
+            "dsh_job_status",
+            {"job_id": job_id, "wait_sec": 2},
+        )
+    )
+    assert finished["status"] == "success"
+    assert finished["trajectory_id"] == "traj-async-01"
+    saved = store.get("traj-async-01")
+    assert saved is not None
+    assert saved.summary == "Detached dsh run done"

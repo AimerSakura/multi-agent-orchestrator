@@ -48,21 +48,28 @@
 ## 2.5 已验证 MCP 工具契约（实机校验）
 
 ### `codex-worker`（`codex-mcp-bridge` 默认 `app-server`，支持原生 Desktop 会话）
-* **`codex_health_check`**：探测新版 Codex CLI 可执行文件、当前后端（`app-server` / `exec`）、默认模型（`gpt-6-luna`）、允许列表及 `CODEX_ALLOW_ESCALATION` 状态。
+* **`codex_health_check`**：探测新版 Codex CLI 可执行文件、当前后端（`app-server` / `exec`）、默认模型（`gpt-6-luna`）、允许列表、`max_sync_wait_sec` 及 `CODEX_ALLOW_ESCALATION` 状态。
 * **`codex`**：发起新的 Codex 持久化会话（写入 `source="vscode"`，在 Codex Desktop App 对应项目边栏可见）
   * 必填参数：`prompt`、`cwd`（必须在 `CODEX_ALLOWED_ROOT` 白名单目录内）
+  * 可选等待参数：`wait_sec`（默认 `120`，上限 `150`，严格低于 Antigravity 客户端 180 秒 MCP RPC 硬超时；设为 `0` 可立即返回 `job_id`）。
   * 安全与配额硬约束：`sandbox` 仅允许 `"read-only"` 或 `"workspace-write"`（代码层面已拦截 `danger-full-access`）；`model` 默认留空（使用 `gpt-6-luna`），且仅允许白名单内的 Luna 模型（`gpt-6-luna`、`gpt-5.6-luna`）；需要隔离分支开发时可传 `worktree=true`（自动走 `exec --worktree`）。
-* **`codex-reply`**：在同一 Codex 会话中继续对话（支持可选 `sandbox` 覆写）
+* **`codex-reply`**：在同一 Codex 会话中继续对话（支持可选 `sandbox` 覆写与 `wait_sec`）
   * 必填参数：`thread_id`、`prompt`、`cwd`。
+* **`codex_job_status`**：列出后台任务、长轮询等待运行中的 `job_id` 完成，或传 `cancel=true` 干净终止卡死任务与进程树。
 * **`codex_list_threads`** / **`codex_read_thread`**：只读检索/读取 Codex Desktop 与 CLI 的持久化会话列表及完整多轮对话历史。
 
 ### `deepseek-harness`（`dsh-mcp-bridge`）
-* **`dsh_health_check`**：探测本地 `dsh` CLI、`codex` CLI、`127.0.0.1:3080` 及备用 API Key 状态。
-* **`dsh_run_task`**：下发批处理、调研或长循环任务（默认 `model_tier="flash"`；复杂根因分析或方案推演传 `model_tier="reasoner"`；大产物配合 `output_file` 写入 `.agent-handoff/<task_id>/`）。
-* **`dsh_resume_or_fork`**：基于历史 `trajectory_id` 执行 `resume`（原生会话续接）或 `fork`（派生新分支重跑）。
+* **`dsh_health_check`**：探测本地 `dsh` CLI、`codex` CLI、`127.0.0.1:3080`、`max_sync_wait_sec` 及备用 API Key 状态。
+* **`dsh_run_task`**：下发批处理、调研或长循环任务（默认 `model_tier="flash"`；复杂根因分析或方案推演传 `model_tier="reasoner"`；大产物配合 `output_file` 写入 `.agent-handoff/<task_id>/`；支持 `wait_sec`，默认 `120`、上限 `150`）。
+* **`dsh_resume_or_fork`**：基于历史 `trajectory_id` 执行 `resume`（原生会话续接）或 `fork`（派生新分支重跑，同样支持 `wait_sec`）。
+* **`dsh_job_status`**：列出后台 DSH 任务、长轮询等待运行中的 `job_id` 完成，或传 `cancel=true` 干净终止卡死任务。
 * **`dsh_list_sessions`** / **`dsh_read_session`**：只读检索与读取 `~/.dsh` 原生会话历史（优先解压 `.v4.jsonl.zstd`，缺失时自动降级 `projcache` 摘要）。
 
-> **长工程多轮协作规范**：同一项目的连续任务优先复用既有原生 `thread_id`（`codex-reply`）或 `trajectory_id`（`dsh_resume_or_fork`），必要时先通过 `codex_read_thread` / `dsh_read_session` 读取前序终端会话上下文，避免不断新建孤立一次性会话。
+> **防 3 分钟超时拆单与异步长任务规范**：
+> 1. 单次派发粒度控制在 **1–3 个关联文件或单一子模块**，不要让 Worker 在写码轮次内顺带执行耗时的 `uv sync` 或全量测试（环境同步与测试验收统一由主控端在外部命令中运行）。
+> 2. 当 `codex` / `codex-reply` / `dsh_run_task` / `dsh_resume_or_fork` 返回 `status="running"` 与 `job_id` 时，后台任务仍在继续执行；主控端直接调用 `codex_job_status(job_id=..., wait_sec=120)` 或 `dsh_job_status(job_id=..., wait_sec=120)` 续等即可，严禁重复派发。
+> 3. 并行扇出多个长任务时可显式传 `wait_sec=0` 立刻拿到多个 `job_id`，再轮询汇总；必要时可传 `cancel=true` 终止卡死任务并清理进程树。
+> 4. 同一项目的连续任务优先复用既有原生 `thread_id`（`codex-reply`）或 `trajectory_id`（`dsh_resume_or_fork`），必要时先通过 `codex_read_thread` / `dsh_read_session` 读取前序终端会话上下文，避免不断新建孤立一次性会话。
 
 ---
 
