@@ -1,0 +1,12 @@
+{
+  "name": "multi-agent-orchestrator",
+  "displayName": "Multi-Agent MCP Orchestrator",
+  "description": "Default three-tier multi-agent orchestration rules and quota-locked MCP bridges for Codex (gpt-6-luna / gpt-5.6-luna) and DeepSeek Harness (dsh).",
+  "version": "0.1.0",
+  "author": "AimerSakura",
+  "suggestedPrompts": [
+    "检查 codex-worker 和 deepseek-harness 的健康状态并汇报可用模型",
+    "先用 deepseek-harness 调研当前项目结构写入 .agent-handoff/，再交给 codex-worker 实现功能",
+    "用 deepseek-harness 对报错日志做根因分析，再由 codex-worker 修复并验证单测"
+  ]
+}
