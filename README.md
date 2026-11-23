@@ -79,6 +79,14 @@ uv run pytest -v
 uv run --directory packages\dsh-mcp-bridge python ..\..\scripts\smoke_test.py
 ```
 
+### 4. 作为 Antigravity 插件一键加载
+
+本仓库已内置标准 Antigravity 插件结构（`plugin.json`、`rules/AGENTS.md`、`mcp_config.example.json`）：
+
+1. 将本仓库克隆（或创建目录软链接）至 `~/.gemini/config/plugins/multi-agent-orchestrator`。
+2. 复制根目录的 `mcp_config.example.json` 为 `mcp_config.json`，并将 `<PATH_TO_REPO>` 与 `<YOUR_WORKSPACE_ROOT>` 替换为你的本地实际路径。
+3. 在 `packages/dsh-mcp-bridge` 下执行 `uv sync` 完成依赖安装后，即可在 Antigravity Customizations 页面直接启用该插件（包含全局编排守则与双 MCP 服务）。
+
 `smoke_test.py` 会依次通过真实 `stdio` 连接验证 `dsh-mcp-bridge` 与 `codex-mcp-bridge` 的握手、Tool 列表、模型配额拦截及路径白名单拦截（如仅测 `dsh` 桥接层可追加 `--skip-codex`）。
 
 ### 4. 生成本地 MCP 配置并接入主控端
