@@ -87,6 +87,10 @@ uv run --directory packages\dsh-mcp-bridge python ..\..\scripts\smoke_test.py
 2. 复制根目录的 `mcp_config.example.json` 为 `mcp_config.json`，并将 `<PATH_TO_REPO>` 与 `<YOUR_WORKSPACE_ROOT>` 替换为你的本地实际路径。
 3. 在 `packages/dsh-mcp-bridge` 下执行 `uv sync` 完成依赖安装后，即可在 Antigravity Customizations 页面直接启用该插件（包含全局编排守则与双 MCP 服务）。
 
+> **macOS 桌面端内置 CLI 路径提示**：若本机 `PATH` 中的 `codex` / `dsh` 为旧版本，可在 `mcp_config.json` 中直接指定桌面端应用内置的最新二进制：
+> - `CODEX_BIN`: `/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex`
+> - `DSH_BIN`: `/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh`
+
 `smoke_test.py` 会依次通过真实 `stdio` 连接验证 `dsh-mcp-bridge` 与 `codex-mcp-bridge` 的握手、Tool 列表、模型配额拦截及路径白名单拦截（如仅测 `dsh` 桥接层可追加 `--skip-codex`）。
 
 ### 4. 生成本地 MCP 配置并接入主控端
