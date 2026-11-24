@@ -102,7 +102,7 @@ class CodexConfig:
     max_log_chars: int = 4000
     ignore_user_config: bool = True
     approval_policy: str = "never"
-    windows_sandbox: str | None = "elevated" if os.name == "nt" else None
+    windows_sandbox: str | None = None
     backend: str = DEFAULT_CODEX_BACKEND
 
     @classmethod
@@ -128,7 +128,7 @@ class CodexConfig:
 
         raw_win_sandbox = env.get("CODEX_WINDOWS_SANDBOX")
         if raw_win_sandbox is None:
-            windows_sandbox: str | None = "elevated" if os.name == "nt" else None
+            windows_sandbox: str | None = None
         else:
             cleaned = raw_win_sandbox.strip().lower()
             windows_sandbox = None if cleaned in {"", "none", "off"} else cleaned
@@ -236,8 +236,10 @@ def _truncate_text(text: str, max_chars: int) -> str:
     return text[: max_chars - len(marker)] + marker
 
 
-def _sandbox_to_turn_policy(sandbox: str, cwd: Path) -> dict[str, Any]:
+def _sandbox_to_turn_policy(sandbox: str, cwd: Path, *, windows_sandbox: str | None = None) -> dict[str, Any]:
     """Convert MCP sandbox string to Codex app-server v2 SandboxPolicy object."""
+    if os.name == "nt" and windows_sandbox is None:
+        return {"type": "dangerFullAccess"}
     if sandbox == "read-only":
         return {"type": "readOnly", "networkAccess": False}
     if sandbox == "workspace-write":
@@ -962,7 +964,9 @@ class CodexExecAdapter:
                 "input": [{"type": "text", "text": prompt}],
             }
             if sandbox is not None:
-                turn_params["sandboxPolicy"] = _sandbox_to_turn_policy(sandbox, cwd)
+                turn_params["sandboxPolicy"] = _sandbox_to_turn_policy(
+            sandbox, cwd, windows_sandbox=self.config.windows_sandbox
+        )
 
             turn_resp = await self._app_server_rpc_request(
                 proc, 3, "turn/start", turn_params, on_notification=_handle_notification
