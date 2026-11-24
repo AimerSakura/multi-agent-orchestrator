@@ -56,55 +56,58 @@
 
 ## 快速开始
 
-### 1. 探测本地环境（Windows PowerShell）
+### macOS
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-env.ps1
-```
+1. **安装插件**：将本仓库克隆（或创建目录软链接）至 `~/.gemini/config/plugins/multi-agent-orchestrator`：
+   ```bash
+   git clone https://github.com/AimerSakura/multi-agent-orchestrator ~/.gemini/config/plugins/multi-agent-orchestrator
+   ```
+2. **安装依赖并运行单测**：
+   ```bash
+   cd ~/.gemini/config/plugins/multi-agent-orchestrator/packages/dsh-mcp-bridge
+   uv sync
+   uv run pytest -v
+   ```
+3. **配置 `mcp_config.json`**：复制根目录的 `mcp_config.example.json` 为 `mcp_config.json`，将 `<PATH_TO_REPO>` 与 `<YOUR_WORKSPACE_ROOT>` 替换为本地实际路径。
+   > **macOS 桌面端内置 CLI 路径提示**：若本机 `PATH` 中的 `codex` / `dsh` 为旧版本，可在 `mcp_config.json` 的 `env` 中直接指定桌面端应用内置的最新二进制：
+   > - `CODEX_BIN`: `/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex`
+   > - `DSH_BIN`: `/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh`
+4. **冒烟测试（可选）**：
+   ```bash
+   uv run --directory packages/dsh-mcp-bridge python ../../scripts/smoke_test.py
+   ```
+   完成以上步骤后，即可在 Antigravity Customizations 页面直接启用该插件（包含全局编排守则与双 MCP 服务）。
 
-### 2. 安装 `dsh-mcp-bridge` 依赖并运行单测
+---
 
-```powershell
-cd packages\dsh-mcp-bridge
-uv sync
-uv run pytest -v
-```
+### Windows
 
-> **Windows 跨盘符环境提示**：若仓库放在非系统盘（如 `D:\`）且 `uv sync` 查询 `.venv\Scripts\python.exe` 出现 `0xc06d007e` 错误，可将 `UV_PROJECT_ENVIRONMENT` 指向 `C:\` 上的目录，例如：
-> `$env:UV_PROJECT_ENVIRONMENT = "$env:LOCALAPPDATA\uv-envs\multi-agent-orchestrator"`
-
-### 3. 运行双服务端 MCP stdio 冒烟测试
-
-```powershell
-uv run --directory packages\dsh-mcp-bridge python ..\..\scripts\smoke_test.py
-```
-
-### 4. 作为 Antigravity 插件一键加载
-
-本仓库已内置标准 Antigravity 插件结构（`plugin.json`、`rules/AGENTS.md`、`mcp_config.example.json`）：
-
-1. 将本仓库克隆（或创建目录软链接）至 `~/.gemini/config/plugins/multi-agent-orchestrator`。
-2. 复制根目录的 `mcp_config.example.json` 为 `mcp_config.json`，并将 `<PATH_TO_REPO>` 与 `<YOUR_WORKSPACE_ROOT>` 替换为你的本地实际路径。
-3. 在 `packages/dsh-mcp-bridge` 下执行 `uv sync` 完成依赖安装后，即可在 Antigravity Customizations 页面直接启用该插件（包含全局编排守则与双 MCP 服务）。
-
-> **macOS 桌面端内置 CLI 路径提示**：若本机 `PATH` 中的 `codex` / `dsh` 为旧版本，可在 `mcp_config.json` 中直接指定桌面端应用内置的最新二进制：
-> - `CODEX_BIN`: `/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex`
-> - `DSH_BIN`: `/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh`
-
-`smoke_test.py` 会依次通过真实 `stdio` 连接验证 `dsh-mcp-bridge` 与 `codex-mcp-bridge` 的握手、Tool 列表、模型配额拦截及路径白名单拦截（如仅测 `dsh` 桥接层可追加 `--skip-codex`）。
-
-### 4. 生成本地 MCP 配置并接入主控端
-
-运行脚本自动生成包含本机绝对路径与 Windows `UV_PROJECT_ENVIRONMENT` 的配置（已加入 `.gitignore`，不会提交到 Git；可通过 `-CodexModel` 覆盖默认 `gpt-6-luna`）：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\render-mcp-config.ps1
-```
-
-然后将生成的 `config/mcp-settings.local.json`（或参考模板 [config/mcp-settings.example.json](config/mcp-settings.example.json)）中的 `mcpServers` 项合并至对应客户端配置：
-
-* **Antigravity**：`~/.gemini/config/mcp_config.json`（可在界面 **Additional Options (...) > MCP Servers** 查看连接状态）
-* **Gemini CLI**：`~/.gemini/settings.json`
+1. **探测本地环境（PowerShell）**：
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-env.ps1
+   ```
+2. **安装 `dsh-mcp-bridge` 依赖并运行单测**：
+   ```powershell
+   cd packages\dsh-mcp-bridge
+   uv sync
+   uv run pytest -v
+   ```
+   > **Windows 跨盘符环境提示**：若仓库放在非系统盘（如 `D:\`）且 `uv sync` 查询 `.venv\Scripts\python.exe` 出现 `0xc06d007e` 错误，可将 `UV_PROJECT_ENVIRONMENT` 指向 `C:\` 上的目录，例如：
+   > `$env:UV_PROJECT_ENVIRONMENT = "$env:LOCALAPPDATA\uv-envs\multi-agent-orchestrator"`
+3. **运行双服务端 MCP stdio 冒烟测试**：
+   ```powershell
+   uv run --directory packages\dsh-mcp-bridge python ..\..\scripts\smoke_test.py
+   ```
+   `smoke_test.py` 会依次通过真实 `stdio` 连接验证 `dsh-mcp-bridge` 与 `codex-mcp-bridge` 的握手、Tool 列表、模型配额拦截及路径白名单拦截（如仅测 `dsh` 桥接层可追加 `--skip-codex`）。
+4. **接入主控端（二选一）**：
+   - **方式 A（Antigravity 插件）**：将本仓库克隆或软链接至 `~/.gemini/config/plugins/multi-agent-orchestrator`，复制 `mcp_config.example.json` 为 `mcp_config.json` 并替换路径后在 Customizations 页面启用。
+   - **方式 B（手动合并 MCP 配置）**：运行脚本生成包含本机绝对路径与 Windows `UV_PROJECT_ENVIRONMENT` 的配置（已加入 `.gitignore`，不会提交到 Git；可通过 `-CodexModel` 覆盖默认 `gpt-6-luna`）：
+     ```powershell
+     powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\render-mcp-config.ps1
+     ```
+     然后将生成的 `config/mcp-settings.local.json`（或参考模板 [config/mcp-settings.example.json](config/mcp-settings.example.json)）中的 `mcpServers` 项合并至对应客户端配置：
+     * **Antigravity**：`~/.gemini/config/mcp_config.json`（可在界面 **Additional Options (...) > MCP Servers** 查看连接状态）
+     * **Gemini CLI**：`~/.gemini/settings.json`
 
 ---
 
